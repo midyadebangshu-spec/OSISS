@@ -1,0 +1,30 @@
+services:
+  postgres:
+    image: postgres:15
+    container_name: osiss-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: osiss
+      POSTGRES_USER: osiss
+      POSTGRES_PASSWORD: osiss
+    ports:
+      - "5433:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.10.4
+    container_name: osiss-elasticsearch
+    restart: unless-stopped
+    environment:
+      discovery.type: single-node
+      xpack.security.enabled: "false"
+      ES_JAVA_OPTS: "-Xms1g -Xmx1g"
+    ports:
+      - "9200:9200"
+    volumes:
+      - es_data:/usr/share/elasticsearch/data
+
+volumes:
+  postgres_data:
+  es_data:

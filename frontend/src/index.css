@@ -1,0 +1,30 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    font-family:
+      Inter,
+      'Noto Sans Bengali',
+      'Noto Sans Devanagari',
+      system-ui,
+      -apple-system,
+      BlinkMacSystemFont,
+      'Segoe UI',
+      sans-serif;
+  }
+
+  * {
+    @apply box-border;
+  }
+
+  body {
+    @apply m-0 bg-white text-zinc-950 antialiased;
+  }
+
+  button,
+  input {
+    font: inherit;
+  }
+}

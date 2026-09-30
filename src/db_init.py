@@ -17,8 +17,11 @@ CREATE TABLE IF NOT EXISTS books (
     department TEXT,
     file_path TEXT NOT NULL UNIQUE,
     language_code TEXT,
+    file_hash TEXT,
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
+
+ALTER TABLE books ADD COLUMN IF NOT EXISTS file_hash TEXT;
 
 CREATE TABLE IF NOT EXISTS chunks (
     id BIGSERIAL PRIMARY KEY,
@@ -63,6 +66,7 @@ def init_elasticsearch() -> None:
                 "page_number": {"type": "integer"},
                 "title": {"type": "text"},
                 "author": {"type": "text"},
+                "department": {"type": "keyword"},
                 "language_code": {"type": "keyword"},
                 "file_path": {"type": "keyword"},
                 "text": {"type": "text"},

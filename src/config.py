@@ -27,11 +27,23 @@ class Settings:
     bge_model_path: str = os.getenv("BGE_MODEL_PATH", "./models/BAAI_bge-m3")
     qa_model_path: str = os.getenv("QA_MODEL_PATH", "./models/deepset_xlm-roberta-large-squad2")
 
+    reranker_model_path: str = os.getenv("RERANKER_MODEL_PATH", "./models/BAAI_bge-reranker-v2-m3")
+    rerank_enabled: bool = os.getenv("RERANK_ENABLED", "true").lower() in {"1", "true", "yes"}
+    retrieval_candidates: int = int(os.getenv("RETRIEVAL_CANDIDATES", "30"))
+    # Weight of the QA score when combining it with the rerank score (0 = rerank only, 1 = QA only).
+    qa_rank_weight: float = float(os.getenv("QA_RANK_WEIGHT", "0.3"))
+
     pdf_dir: str = os.getenv("PDF_DIR", "./data/pdfs")
     polling_interval_seconds: int = int(os.getenv("POLLING_INTERVAL_SECONDS", "10"))
 
+    ocr_language: str = os.getenv("OCR_LANGUAGE", "eng")
+
     chunk_size_words: int = int(os.getenv("CHUNK_SIZE_WORDS", "300"))
     chunk_overlap_words: int = int(os.getenv("CHUNK_OVERLAP_WORDS", "50"))
+
+    min_qa_score: float = float(os.getenv("MIN_QA_SCORE", "0.0"))
+
+    hybrid_keyword_boost: float = float(os.getenv("HYBRID_KEYWORD_BOOST", "0.01"))
 
     embedding_dim: int = int(os.getenv("EMBEDDING_DIM", "1024"))
     inference_device: str = os.getenv("INFERENCE_DEVICE", "auto").lower()

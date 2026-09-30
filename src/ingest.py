@@ -14,7 +14,8 @@ import argparse
 import os
 import sys
 import time
-from typing import Dict, List, Set, Tuple
+from collections import Counter
+from typing import Dict, List, Optional, Tuple
 
 from elasticsearch.helpers import bulk
 from sentence_transformers import SentenceTransformer
@@ -22,7 +23,14 @@ import torch
 
 from clients import get_elasticsearch_client, get_postgres_connection
 from config import settings
-from utils import build_page_aware_chunks, extract_pdf_pages, infer_metadata_from_filename, sanitize_text
+from utils import (
+    build_page_aware_chunks,
+    compute_file_hash,
+    detect_language_code,
+    extract_pdf_pages,
+    infer_metadata_from_filename,
+    sanitize_text,
+)
 
 
 def resolve_embedder_device() -> str:
@@ -49,19 +57,37 @@ def list_pdf_files(pdf_dir: str) -> List[str]:
     return sorted(entries)
 
 
-def fetch_ingested_file_paths(connection) -> Set[str]:
-    """Load file paths already registered in PostgreSQL books table."""
+def fetch_ingested_books(connection) -> Dict[str, Tuple[int, Optional[str]]]:
+    """Map file_path -> (book_id, file_hash) for books already in PostgreSQL."""
     with connection.cursor() as cursor:
-        cursor.execute("SELECT file_path FROM books")
+        cursor.execute("SELECT file_path, id, file_hash FROM books")
         rows = cursor.fetchall()
-    return {row[0] for row in rows}
+    return {row[0]: (row[1], row[2]) for row in rows}
 
 
-def insert_book(connection, metadata: Dict, file_path: str) -> int:
+def set_book_hash(connection, book_id: int, file_hash: str) -> None:
+    """Backfill the content hash for a book ingested before hashing existed."""
+    with connection.cursor() as cursor:
+        cursor.execute("UPDATE books SET file_hash = %s WHERE id = %s", (file_hash, book_id))
+
+
+def delete_book(connection, es_client, book_id: int) -> None:
+    """Remove a book's rows (chunks cascade) and its Elasticsearch documents."""
+    es_client.delete_by_query(
+        index=settings.elasticsearch_index,
+        body={"query": {"term": {"book_id": book_id}}},
+        refresh=True,
+    )
+    with connection:
+        with connection.cursor() as cursor:
+            cursor.execute("DELETE FROM books WHERE id = %s", (book_id,))
+
+
+def insert_book(connection, metadata: Dict, file_path: str, file_hash: str) -> int:
     """Insert a book record and return its ID."""
     query = """
-    INSERT INTO books (title, author, publication_year, department, file_path, language_code)
-    VALUES (%s, %s, %s, %s, %s, %s)
+    INSERT INTO books (title, author, publication_year, department, file_path, language_code, file_hash)
+    VALUES (%s, %s, %s, %s, %s, %s, %s)
     RETURNING id
     """
 
@@ -74,13 +100,16 @@ def insert_book(connection, metadata: Dict, file_path: str) -> int:
                 metadata.get("publication_year"),
                 metadata.get("department"),
                 file_path,
-                None,
+                metadata.get("language_code"),
+                file_hash,
             ),
         )
         return cursor.fetchone()[0]
 
 
-def insert_chunk(connection, book_id: int, chunk_index: int, page_number: int, chunk_text: str) -> int:
+def insert_chunk(
+    connection, book_id: int, chunk_index: int, page_number: int, chunk_text: str, language_code: str
+) -> int:
     """Insert a chunk row and return chunk ID."""
     query = """
     INSERT INTO chunks (book_id, chunk_index, page_number, chunk_text, language_code, es_doc_id)
@@ -89,7 +118,7 @@ def insert_chunk(connection, book_id: int, chunk_index: int, page_number: int, c
     """
 
     with connection.cursor() as cursor:
-        cursor.execute(query, (book_id, chunk_index, page_number, chunk_text, None, None))
+        cursor.execute(query, (book_id, chunk_index, page_number, chunk_text, language_code, None))
         return cursor.fetchone()[0]
 
 
@@ -104,6 +133,7 @@ def process_pdf(
     connection,
     es_client,
     embedder: SentenceTransformer,
+    file_hash: str,
 ) -> Tuple[bool, str]:
     """Process a single PDF and index all extracted chunks.
 
@@ -129,8 +159,11 @@ def process_pdf(
         full_title = metadata.get("title") or os.path.basename(file_path)
         metadata["title"] = full_title
 
+        chunk_languages = [detect_language_code(text) for _, text in chunks]
+        metadata["language_code"] = Counter(chunk_languages).most_common(1)[0][0]
+
         with connection:
-            book_id = insert_book(connection, metadata, file_path)
+            book_id = insert_book(connection, metadata, file_path, file_hash)
 
             texts = [sanitize_text(chunk_text) for _, chunk_text in chunks]
             embeddings = embedder.encode(texts, normalize_embeddings=True, convert_to_numpy=True)
@@ -140,7 +173,7 @@ def process_pdf(
 
             for idx, (page_number, chunk_text) in enumerate(chunks):
                 chunk_text = sanitize_text(chunk_text)
-                chunk_id = insert_chunk(connection, book_id, idx, page_number, chunk_text)
+                chunk_id = insert_chunk(connection, book_id, idx, page_number, chunk_text, chunk_languages[idx])
                 chunk_records.append((chunk_id, idx))
 
                 action = {
@@ -153,7 +186,8 @@ def process_pdf(
                         "page_number": page_number,
                         "title": metadata.get("title"),
                         "author": metadata.get("author"),
-                        "language_code": metadata.get("language_code"),
+                        "department": metadata.get("department"),
+                        "language_code": chunk_languages[idx],
                         "file_path": file_path,
                         "text": chunk_text,
                         "embedding": embeddings[idx].tolist(),
@@ -193,18 +227,32 @@ def run_ingestion_loop(once: bool) -> int:
     try:
         while True:
             with connection:
-                known_files = fetch_ingested_file_paths(connection)
+                known_books = fetch_ingested_books(connection)
 
-            all_pdfs = list_pdf_files(settings.pdf_dir)
-            new_files = [path for path in all_pdfs if path not in known_files]
+            new_files: List[Tuple[str, str]] = []
+            for path in list_pdf_files(settings.pdf_dir):
+                file_hash = compute_file_hash(path)
+                known = known_books.get(path)
+                if known is None:
+                    new_files.append((path, file_hash))
+                    continue
+
+                book_id, stored_hash = known
+                if stored_hash is None:
+                    with connection:
+                        set_book_hash(connection, book_id, file_hash)
+                elif stored_hash != file_hash:
+                    print(f"[OSISS] Content changed for '{path}'; re-ingesting.")
+                    delete_book(connection, es_client, book_id)
+                    new_files.append((path, file_hash))
 
             if not new_files:
-                print("[OSISS] No new PDFs found.")
+                print("[OSISS] No new or changed PDFs found.")
             else:
-                print(f"[OSISS] Found {len(new_files)} new PDF(s).")
+                print(f"[OSISS] Found {len(new_files)} new or changed PDF(s).")
 
-            for pdf_path in new_files:
-                ok, message = process_pdf(pdf_path, connection, es_client, embedder)
+            for pdf_path, file_hash in new_files:
+                ok, message = process_pdf(pdf_path, connection, es_client, embedder, file_hash)
                 if ok:
                     print(f"[OSISS] {message}")
                 else:

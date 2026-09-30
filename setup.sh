@@ -4,6 +4,33 @@ set -euo pipefail
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 VENV_PATH="$PROJECT_ROOT/.venv"
 
+install_system_packages() {
+  if ! command -v apt-get >/dev/null 2>&1; then
+    echo "[OSISS] apt-get not found; skipping system package install."
+    return 0
+  fi
+
+  local apt_cmd="apt-get"
+  if [[ ${EUID:-0} -ne 0 ]]; then
+    if command -v sudo >/dev/null 2>&1; then
+      apt_cmd="sudo apt-get"
+    else
+      echo "[OSISS] sudo not available; skipping system package install."
+      return 0
+    fi
+  fi
+
+  echo "[OSISS] Installing system packages (idempotent)..."
+  $apt_cmd update -y
+  $apt_cmd install -y \
+    python3-venv \
+    python3-pip \
+    tesseract-ocr \
+    tesseract-ocr-eng \
+    tesseract-ocr-ben \
+    tesseract-ocr-hin
+}
+
 docker_compose_cmd() {
   if docker info >/dev/null 2>&1; then
     echo "docker compose"
@@ -29,6 +56,8 @@ echo "[OSISS] Creating required directories..."
 mkdir -p "$PROJECT_ROOT/data/pdfs"
 mkdir -p "$PROJECT_ROOT/models"
 
+install_system_packages
+
 echo "[OSISS] Creating Python virtual environment..."
 if [[ ! -d "$VENV_PATH" ]]; then
   python3 -m venv "$VENV_PATH"
@@ -41,10 +70,17 @@ echo "[OSISS] Installing Python dependencies..."
 python -m pip install --upgrade pip
 python -m pip install -r "$PROJECT_ROOT/requirements.txt"
 
+if [[ -f "$PROJECT_ROOT/frontend/package.json" ]]; then
+  if command -v npm >/dev/null 2>&1; then
+    echo "[OSISS] Installing frontend dependencies..."
+    (cd "$PROJECT_ROOT/frontend" && npm install)
+  else
+    echo "[OSISS] npm not found; skipping frontend dependency install."
+  fi
+fi
+
 echo "[OSISS] Starting PostgreSQL and Elasticsearch with Docker Compose..."
 DOCKER_COMPOSE_CMD="$(docker_compose_cmd)"
-echo "[OSISS] Resetting existing OSISS containers (if any)..."
-$DOCKER_COMPOSE_CMD -f "$PROJECT_ROOT/docker-compose.yml" down --remove-orphans || true
 $DOCKER_COMPOSE_CMD -f "$PROJECT_ROOT/docker-compose.yml" up -d postgres elasticsearch
 
 echo "[OSISS] Waiting for PostgreSQL and Elasticsearch to become healthy..."

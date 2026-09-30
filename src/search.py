@@ -7,9 +7,10 @@ import json
 import os
 import re
 import sys
-from typing import Callable, Dict, List, Tuple
+from functools import lru_cache
+from typing import Callable, Dict, List, Optional, Tuple
 
-from sentence_transformers import SentenceTransformer
+from sentence_transformers import CrossEncoder, SentenceTransformer
 import torch
 from transformers import AutoModelForQuestionAnswering, AutoTokenizer, XLMRobertaTokenizer, pipeline
 
@@ -112,10 +113,11 @@ def build_qa_runner(qa_device: int) -> Callable[[str, str], Dict]:
     return run_manual_qa
 
 
-def retrieve_top_chunks(es_client, query_vector: List[float], top_k: int = 3) -> List[Dict]:
-    """Retrieve top-k semantically similar chunks from Elasticsearch."""
+def retrieve_top_chunks(es_client, query_text: str, query_vector: List[float], top_k: int = 3) -> List[Dict]:
+    """Retrieve top-k chunks using hybrid kNN (semantic) + BM25 (keyword) scoring."""
     response = es_client.search(
         index=settings.elasticsearch_index,
+        query={"match": {"text": {"query": query_text, "boost": settings.hybrid_keyword_boost}}},
         knn={
             "field": "embedding",
             "query_vector": query_vector,
@@ -235,17 +237,65 @@ def extract_matched_paragraph(chunk_text: str, start: int, end: int, max_words: 
     return " ".join(ordered_sentences).strip()
 
 
-def search_and_extract(query: str, top_k: int = 3) -> Dict:
-    """Full search pipeline from query embedding to extractive answer JSON."""
-    es_client = get_elasticsearch_client()
+@lru_cache(maxsize=1)
+def get_es_client():
+    """Create the Elasticsearch client once and reuse it across requests."""
+    return get_elasticsearch_client()
+
+
+@lru_cache(maxsize=1)
+def get_models() -> Tuple[SentenceTransformer, Callable[[str, str], Dict]]:
+    """Load the embedder and QA runner once per process."""
     embedder_device, qa_device = resolve_runtime_devices()
     print(f"[OSISS] Retriever device: {embedder_device} | QA device: {'cuda:0' if qa_device == 0 else 'cpu'}")
-
     embedder = SentenceTransformer(settings.bge_model_path, device=embedder_device, local_files_only=True)
-    qa_runner = build_qa_runner(qa_device)
+    return embedder, build_qa_runner(qa_device)
+
+
+def final_score(result: Dict) -> float:
+    """Blend rerank and QA scores; falls back to QA alone when reranking is off."""
+    rerank = result.get("rerank_score")
+    if rerank is None:
+        return result["qa_score"]
+    weight = settings.qa_rank_weight
+    return (1.0 - weight) * rerank + weight * result["qa_score"]
+
+
+@lru_cache(maxsize=1)
+def get_reranker() -> Optional[CrossEncoder]:
+    """Load the cross-encoder reranker once; None when disabled or not downloaded."""
+    if not settings.rerank_enabled:
+        return None
+    if not os.path.isdir(settings.reranker_model_path):
+        print(f"[OSISS] Reranker not found at '{settings.reranker_model_path}'; skipping reranking.")
+        return None
+    device, _ = resolve_runtime_devices()
+    return CrossEncoder(settings.reranker_model_path, device=device, local_files_only=True)
+
+
+def rerank_candidates(query: str, candidates: List[Dict]) -> List[Dict]:
+    """Score (query, chunk) pairs with the cross-encoder and sort best-first."""
+    reranker = get_reranker()
+    if reranker is None or not candidates:
+        return candidates
+
+    pairs = [(query, item["source"].get("text", "")) for item in candidates]
+    scores = reranker.predict(pairs, batch_size=8, show_progress_bar=False)
+    for item, score in zip(candidates, scores):
+        item["rerank_score"] = float(score)
+    return sorted(candidates, key=lambda item: item["rerank_score"], reverse=True)
+
+
+def search_and_extract(query: str, top_k: int = 3) -> Dict:
+    """Full search pipeline from query embedding to extractive answer JSON."""
+    es_client = get_es_client()
+    embedder, qa_runner = get_models()
 
     query_embedding = embedder.encode([query], normalize_embeddings=True, convert_to_numpy=True)[0].tolist()
-    candidates = retrieve_top_chunks(es_client, query_embedding, top_k=top_k)
+    candidates = retrieve_top_chunks(
+        es_client, query, query_embedding, top_k=max(top_k, settings.retrieval_candidates)
+    )
+    candidates = rerank_candidates(query, candidates)[:top_k]
 
     if not candidates:
         return {
@@ -262,6 +312,8 @@ def search_and_extract(query: str, top_k: int = 3) -> Dict:
             continue
 
         qa_result = answer_with_qa(qa_runner, query, chunk_text)
+        if qa_result["score"] < settings.min_qa_score:
+            continue
         full_answer, answer_start, answer_end = extract_complete_sentence(
             chunk_text=chunk_text,
             start=qa_result["start"],
@@ -277,6 +329,7 @@ def search_and_extract(query: str, top_k: int = 3) -> Dict:
             {
                 "rank": rank,
                 "retrieval_score": item["score"],
+                "rerank_score": item.get("rerank_score"),
                 "qa_score": qa_result["score"],
                 "quote": full_answer or qa_result["answer"],
                 "answer_span": {
@@ -286,6 +339,7 @@ def search_and_extract(query: str, top_k: int = 3) -> Dict:
                 "source": {
                     "book_title": src.get("title"),
                     "author": src.get("author"),
+                    "department": src.get("department"),
                     "page_number": src.get("page_number"),
                     "file_path": src.get("file_path"),
                 },
@@ -294,7 +348,7 @@ def search_and_extract(query: str, top_k: int = 3) -> Dict:
             }
         )
 
-    enriched_results.sort(key=lambda x: x["qa_score"], reverse=True)
+    enriched_results.sort(key=final_score, reverse=True)
     return {
         "query": query,
         "results": enriched_results,

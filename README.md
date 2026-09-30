@@ -99,6 +99,8 @@ INFERENCE_DEVICE=auto|cpu|cuda
 - Retrieval is hybrid: dense kNN (BGE-M3) plus BM25 keyword scoring. Tune with `HYBRID_KEYWORD_BOOST` (default `0.01`, chosen by a sweep on the eval set; `0` disables keyword scoring. BM25 scores are unbounded while cosine scores are 0–1, so large values let keyword matches swamp the semantic score).
 - Search retrieves `RETRIEVAL_CANDIDATES` (default 30) chunks, reranks them with `BAAI/bge-reranker-v2-m3` (`RERANK_ENABLED=false` to turn off; needs `python src/download_models.py`), then runs QA on the best `top_k`. Final order blends rerank and QA scores via `QA_RANK_WEIGHT` (default `0.3`). Reranking adds roughly 1.5 s per query on an RTX 3060.
 - Evaluate accuracy: `.venv/bin/python tests/eval_search.py --validate` then `--mode full --depth 3`.
+- Exercise / question-bank chunks (review questions, MCQ lists, `[LO x.y]` exercise tags) are flagged `is_exercise` at ingestion and excluded from search (`EXCLUDE_EXERCISES=false` to include them). For already-ingested data run `.venv/bin/python src/backfill_exercise_flags.py [--dry-run --samples 3]` (no re-embedding).
+- Trailing chunk fragments under `MIN_CHUNK_WORDS` (default 40) are merged into the previous chunk of the same page at ingestion time; existing chunks are only affected if a book is re-ingested.
 - `MIN_QA_SCORE` drops low-confidence QA results (default `0.0`, no filtering).
 - `OCR_LANGUAGE=eng+ben+hin` enables Bengali/Hindi OCR (language packs are installed by `setup.sh`).
 - Ingestion tracks a SHA-256 hash per PDF; a PDF modified at the same path is automatically re-indexed.

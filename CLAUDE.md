@@ -36,6 +36,8 @@ Two pipelines share Postgres + Elasticsearch (docker-compose; Postgres on host p
 - **API contract**: `api_server.map_result` converts search output to `{exact_quote, book_title, author, department, page_number, pdf_link, paragraph_text}`. `frontend/src/lib/searchApi.ts` normalizes that shape, and the page viewer is an iframe on `pdf_link#page=N`. Stored `page_number` is the PDF page position, not the printed page number.
 - All settings are env-driven in the frozen `Settings` dataclass in `config.py` (read at import time; tests/sweeps override with `object.__setattr__(settings, ...)`).
 
+Chunks get an `is_exercise` flag (`utils.is_exercise_chunk`, a deliberately conservative heuristic) that `retrieve_top_chunks` filters out via `EXCLUDE_EXERCISES`; after changing the heuristic, re-apply it to existing data with `src/backfill_exercise_flags.py` (updates PG + ES in place, no re-embedding). Chunk-boundary changes (e.g. `MIN_CHUNK_WORDS` tail merging) only take effect for newly ingested/re-ingested books.
+
 Changing the ES mapping or embedding dim requires recreating the index (`db_init.py` only creates it if absent) and re-ingesting.
 
 ## Evaluating search changes

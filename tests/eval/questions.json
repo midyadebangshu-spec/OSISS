@@ -1,0 +1,558 @@
+[
+ {
+  "query": "What is the definition of intermolecular forces?",
+  "lang": "en",
+  "expected": [
+   {
+    "file": "Intermolecular force",
+    "pages": [
+     1
+    ]
+   }
+  ],
+  "answer_contains": "forces of attraction or repulsion between neighbour molecules",
+  "id": "q01"
+ },
+ {
+  "query": "What is Amagat's curve?",
+  "lang": "en",
+  "expected": [
+   {
+    "file": "Intermolecular force",
+    "pages": [
+     6
+    ]
+   }
+  ],
+  "answer_contains": "Amagat",
+  "id": "q02"
+ },
+ {
+  "query": "What is the compressibility factor of an ideal gas?",
+  "lang": "en",
+  "expected": [
+   {
+    "file": "Intermolecular force",
+    "pages": [
+     5
+    ]
+   }
+  ],
+  "answer_contains": "PV/nRT",
+  "id": "q03"
+ },
+ {
+  "query": "What does the constant b in the van der Waals equation represent?",
+  "lang": "en",
+  "expected": [
+   {
+    "file": "Intermolecular force",
+    "pages": [
+     8
+    ]
+   }
+  ],
+  "answer_contains": "effective size of gas molecules",
+  "id": "q04"
+ },
+ {
+  "query": "Define critical temperature of a gas",
+  "lang": "en",
+  "expected": [
+   {
+    "file": "Intermolecular force",
+    "pages": [
+     9
+    ]
+   }
+  ],
+  "answer_contains": "critical temperature",
+  "id": "q05"
+ },
+ {
+  "query": "What is the law of corresponding states?",
+  "lang": "en",
+  "expected": [
+   {
+    "file": "Intermolecular force",
+    "pages": [
+     10
+    ]
+   }
+  ],
+  "answer_contains": "law of corresponding states",
+  "id": "q06"
+ },
+ {
+  "query": "What are the two types of hydrogen bonding?",
+  "lang": "en",
+  "expected": [
+   {
+    "file": "Intermolecular force",
+    "pages": [
+     2
+    ]
+   }
+  ],
+  "answer_contains": "Intramolecular",
+  "id": "q07"
+ },
+ {
+  "query": "What is the unit of van der Waals constant a?",
+  "lang": "en",
+  "expected": [
+   {
+    "file": "Intermolecular force",
+    "pages": [
+     8
+    ]
+   }
+  ],
+  "answer_contains": "atm L2 mol-2",
+  "id": "q08"
+ },
+ {
+  "query": "What is stereochemistry?",
+  "lang": "en",
+  "expected": [
+   {
+    "file": "Stereochemistry",
+    "pages": [
+     1
+    ]
+   }
+  ],
+  "answer_contains": "spatial three-dimensional arrangement",
+  "id": "q09"
+ },
+ {
+  "query": "Define specific rotation",
+  "lang": "en",
+  "expected": [
+   {
+    "file": "Stereochemistry",
+    "pages": [
+     6
+    ]
+   }
+  ],
+  "answer_contains": "Specific rotation",
+  "id": "q10"
+ },
+ {
+  "query": "What are enantiomers?",
+  "lang": "en",
+  "expected": [
+   {
+    "file": "Stereochemistry",
+    "pages": [
+     3
+    ]
+   }
+  ],
+  "answer_contains": "mirror image relationship",
+  "id": "q11"
+ },
+ {
+  "query": "What is chirality?",
+  "lang": "en",
+  "expected": [
+   {
+    "file": "Stereochemistry",
+    "pages": [
+     5
+    ]
+   }
+  ],
+  "answer_contains": "not superposable on its mirror image",
+  "id": "q12"
+ },
+ {
+  "query": "What are cis and trans configurations of an alkene?",
+  "lang": "en",
+  "expected": [
+   {
+    "file": "Stereochemistry",
+    "pages": [
+     9
+    ]
+   }
+  ],
+  "answer_contains": "cis",
+  "id": "q13"
+ },
+ {
+  "query": "Why is the staggered conformation more stable than the eclipsed form?",
+  "lang": "en",
+  "expected": [
+   {
+    "file": "Stereochemistry",
+    "pages": [
+     11
+    ]
+   }
+  ],
+  "answer_contains": "staggered form is more stable",
+  "id": "q14"
+ },
+ {
+  "query": "What is a simple axis of symmetry?",
+  "lang": "en",
+  "expected": [
+   {
+    "file": "Stereochemistry",
+    "pages": [
+     4
+    ]
+   }
+  ],
+  "answer_contains": "axis of symmetry",
+  "id": "q15"
+ },
+ {
+  "query": "State the first law of thermodynamics",
+  "lang": "en",
+  "expected": [
+   {
+    "file": "Use of free energy",
+    "pages": [
+     4
+    ]
+   }
+  ],
+  "answer_contains": "cannot be created or destroyed",
+  "id": "q16"
+ },
+ {
+  "query": "Define entropy",
+  "lang": "en",
+  "expected": [
+   {
+    "file": "Use of free energy",
+    "pages": [
+     8
+    ]
+   }
+  ],
+  "answer_contains": "measure of the disorder",
+  "id": "q17"
+ },
+ {
+  "query": "What is Helmholtz free energy or work function?",
+  "lang": "en",
+  "expected": [
+   {
+    "file": "Use of free energy",
+    "pages": [
+     11
+    ]
+   }
+  ],
+  "answer_contains": "Work Function",
+  "id": "q18"
+ },
+ {
+  "query": "What is the criterion of spontaneity in terms of free energy?",
+  "lang": "en",
+  "expected": [
+   {
+    "file": "Use of free energy",
+    "pages": [
+     12
+    ]
+   }
+  ],
+  "answer_contains": "spontaneity",
+  "id": "q19"
+ },
+ {
+  "query": "What is the Nernst equation for the Daniell cell?",
+  "lang": "en",
+  "expected": [
+   {
+    "file": "Use of free energy",
+    "pages": [
+     18
+    ]
+   }
+  ],
+  "answer_contains": "Nernst",
+  "id": "q20"
+ },
+ {
+  "query": "What is hardness of water?",
+  "lang": "en",
+  "expected": [
+   {
+    "file": "Use of free energy",
+    "pages": [
+     22
+    ]
+   }
+  ],
+  "answer_contains": "prevents formation of lather",
+  "id": "q21"
+ },
+ {
+  "query": "What is a reference electrode?",
+  "lang": "en",
+  "expected": [
+   {
+    "file": "Use of free energy",
+    "pages": [
+     19
+    ]
+   }
+  ],
+  "answer_contains": "stable and well-known electrode potential",
+  "id": "q22"
+ },
+ {
+  "query": "What happens at the anode of the Daniell cell?",
+  "lang": "en",
+  "expected": [
+   {
+    "file": "Use of free energy",
+    "pages": [
+     16
+    ]
+   }
+  ],
+  "answer_contains": "zinc is oxidized",
+  "id": "q23"
+ },
+ {
+  "query": "हाइड्रोजन बंधन के दो प्रकार कौन से हैं?",
+  "lang": "hi",
+  "expected": [
+   {
+    "file": "Intermolecular force",
+    "pages": [
+     2
+    ]
+   }
+  ],
+  "answer_contains": "Intramolecular",
+  "id": "q24"
+ },
+ {
+  "query": "विशिष्ट घूर्णन की परिभाषा क्या है?",
+  "lang": "hi",
+  "expected": [
+   {
+    "file": "Stereochemistry",
+    "pages": [
+     6
+    ]
+   }
+  ],
+  "answer_contains": "Specific rotation",
+  "id": "q25"
+ },
+ {
+  "query": "এনট্রপি কী?",
+  "lang": "bn",
+  "expected": [
+   {
+    "file": "Use of free energy",
+    "pages": [
+     8
+    ]
+   }
+  ],
+  "answer_contains": "measure of the disorder",
+  "id": "q26"
+ },
+ {
+  "query": "ভ্যান ডার ওয়ালস সমীকরণে b ধ্রুবক কী নির্দেশ করে?",
+  "lang": "bn",
+  "expected": [
+   {
+    "file": "Intermolecular force",
+    "pages": [
+     8
+    ]
+   }
+  ],
+  "answer_contains": "effective size of gas molecules",
+  "id": "q27"
+ },
+ {
+  "query": "What is a stack?",
+  "lang": "en",
+  "expected": [
+   {
+    "file": "REEMA THAREJA",
+    "pages": [
+     61,
+     233
+    ]
+   },
+   {
+    "file": "DATA-STRUCTURE-BOOK-3",
+    "pages": [
+     280
+    ]
+   }
+  ],
+  "answer_contains": "one end",
+  "id": "q28"
+ },
+ {
+  "query": "What are the properties of a binary search tree?",
+  "lang": "en",
+  "expected": [
+   {
+    "file": "REEMA THAREJA",
+    "pages": [
+     313
+    ]
+   }
+  ],
+  "answer_contains": "left sub-tree of a node N contains values that are less",
+  "id": "q29"
+ },
+ {
+  "query": "What is the Tower of Hanoi?",
+  "lang": "en",
+  "expected": [
+   {
+    "file": "REEMA THAREJA",
+    "pages": [
+     262
+    ]
+   }
+  ],
+  "answer_contains": "main applications of recursion",
+  "id": "q30"
+ },
+ {
+  "query": "What is a linked list?",
+  "lang": "en",
+  "expected": [
+   {
+    "file": "REEMA THAREJA",
+    "pages": [
+     77,
+     176,
+     177,
+     230
+    ]
+   },
+   {
+    "file": "Balagurusamy",
+    "pages": [
+     682,
+     685
+    ]
+   }
+  ],
+  "answer_contains": "linked list is a linear",
+  "id": "q31"
+ },
+ {
+  "query": "Which two great epics show the root and flower of English literature?",
+  "lang": "en",
+  "expected": [
+   {
+    "file": "English Book",
+    "pages": [
+     41
+    ]
+   }
+  ],
+  "answer_contains": "Beowulf and Paradise Lost",
+  "id": "q32"
+ },
+ {
+  "query": "What is Pope's Essay on Man?",
+  "lang": "en",
+  "expected": [
+   {
+    "file": "English Book",
+    "pages": [
+     242
+    ]
+   }
+  ],
+  "answer_contains": "Essay on Man",
+  "id": "q33"
+ },
+ {
+  "query": "What is the Stern-Gerlach experiment?",
+  "lang": "en",
+  "expected": [
+   {
+    "file": "qb.pdf",
+    "pages": [
+     170
+    ]
+   }
+  ],
+  "answer_contains": "Stern-Gerlach",
+  "id": "q34"
+ },
+ {
+  "query": "Who first stated the uncertainty principle?",
+  "lang": "en",
+  "expected": [
+   {
+    "file": "qb.pdf",
+    "pages": [
+     36
+    ]
+   }
+  ],
+  "answer_contains": "Werner Heisenberg",
+  "id": "q35"
+ },
+ {
+  "query": "What is an array in C?",
+  "lang": "en",
+  "expected": [
+   {
+    "file": "Balagurusamy",
+    "pages": [
+     331
+    ]
+   },
+   {
+    "file": "REEMA THAREJA",
+    "pages": [
+     81,
+     126
+    ]
+   }
+  ],
+  "answer_contains": "fixed-size sequenced collection",
+  "id": "q36"
+ },
+ {
+  "query": "What is a pointer variable?",
+  "lang": "en",
+  "expected": [
+   {
+    "file": "Balagurusamy",
+    "pages": [
+     579
+    ]
+   }
+  ],
+  "answer_contains": "pointer is a variable",
+  "id": "q37"
+ },
+ {
+  "query": "Which decision making statements does C support?",
+  "lang": "en",
+  "expected": [
+   {
+    "file": "Balagurusamy",
+    "pages": [
+     221
+    ]
+   }
+  ],
+  "answer_contains": "switch statement",
+  "id": "q38"
+ }
+]

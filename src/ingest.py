@@ -28,6 +28,7 @@ from utils import (
     compute_file_hash,
     detect_language_code,
     extract_pdf_pages,
+    is_exercise_chunk,
     infer_metadata_from_filename,
     sanitize_text,
 )
@@ -108,17 +109,17 @@ def insert_book(connection, metadata: Dict, file_path: str, file_hash: str) -> i
 
 
 def insert_chunk(
-    connection, book_id: int, chunk_index: int, page_number: int, chunk_text: str, language_code: str
+    connection, book_id: int, chunk_index: int, page_number: int, chunk_text: str, language_code: str, is_exercise: bool
 ) -> int:
     """Insert a chunk row and return chunk ID."""
     query = """
-    INSERT INTO chunks (book_id, chunk_index, page_number, chunk_text, language_code, es_doc_id)
-    VALUES (%s, %s, %s, %s, %s, %s)
+    INSERT INTO chunks (book_id, chunk_index, page_number, chunk_text, language_code, es_doc_id, is_exercise)
+    VALUES (%s, %s, %s, %s, %s, %s, %s)
     RETURNING id
     """
 
     with connection.cursor() as cursor:
-        cursor.execute(query, (book_id, chunk_index, page_number, chunk_text, language_code, None))
+        cursor.execute(query, (book_id, chunk_index, page_number, chunk_text, language_code, None, is_exercise))
         return cursor.fetchone()[0]
 
 
@@ -159,6 +160,7 @@ def process_pdf(
         full_title = metadata.get("title") or os.path.basename(file_path)
         metadata["title"] = full_title
 
+        exercise_flags = [is_exercise_chunk(text) for _, text in chunks]
         chunk_languages = [detect_language_code(text) for _, text in chunks]
         metadata["language_code"] = Counter(chunk_languages).most_common(1)[0][0]
 
@@ -173,7 +175,9 @@ def process_pdf(
 
             for idx, (page_number, chunk_text) in enumerate(chunks):
                 chunk_text = sanitize_text(chunk_text)
-                chunk_id = insert_chunk(connection, book_id, idx, page_number, chunk_text, chunk_languages[idx])
+                chunk_id = insert_chunk(
+                    connection, book_id, idx, page_number, chunk_text, chunk_languages[idx], exercise_flags[idx]
+                )
                 chunk_records.append((chunk_id, idx))
 
                 action = {
@@ -189,6 +193,7 @@ def process_pdf(
                         "department": metadata.get("department"),
                         "language_code": chunk_languages[idx],
                         "file_path": file_path,
+                        "is_exercise": exercise_flags[idx],
                         "text": chunk_text,
                         "embedding": embeddings[idx].tolist(),
                     },

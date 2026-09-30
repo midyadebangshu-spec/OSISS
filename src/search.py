@@ -115,15 +115,26 @@ def build_qa_runner(qa_device: int) -> Callable[[str, str], Dict]:
 
 def retrieve_top_chunks(es_client, query_text: str, query_vector: List[float], top_k: int = 3) -> List[Dict]:
     """Retrieve top-k chunks using hybrid kNN (semantic) + BM25 (keyword) scoring."""
+    keyword_query: Dict = {"match": {"text": {"query": query_text, "boost": settings.hybrid_keyword_boost}}}
+    knn_filter: Optional[Dict] = None
+    if settings.exclude_exercises:
+        exclusion = {"must_not": [{"term": {"is_exercise": True}}]}
+        keyword_query = {"bool": {"must": [keyword_query], **exclusion}}
+        knn_filter = {"bool": exclusion}
+
+    knn: Dict = {
+        "field": "embedding",
+        "query_vector": query_vector,
+        "k": top_k,
+        "num_candidates": max(10, top_k * 10),
+    }
+    if knn_filter:
+        knn["filter"] = knn_filter
+
     response = es_client.search(
         index=settings.elasticsearch_index,
-        query={"match": {"text": {"query": query_text, "boost": settings.hybrid_keyword_boost}}},
-        knn={
-            "field": "embedding",
-            "query_vector": query_vector,
-            "k": top_k,
-            "num_candidates": max(10, top_k * 10),
-        },
+        query=keyword_query,
+        knn=knn,
         size=top_k,
     )
 

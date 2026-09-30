@@ -141,37 +141,78 @@ def extract_pdf_pages(file_path: str) -> List[PageText]:
     return pages
 
 
-def chunk_words(text: str, chunk_size: int, overlap: int) -> Iterator[str]:
+def chunk_words(text: str, chunk_size: int, overlap: int, min_tail_words: int = 0) -> Iterator[str]:
     """Split a string into overlapping word chunks.
 
     This strategy is language-agnostic and robust for multilingual Unicode text
-    while keeping context windows manageable for embeddings and QA.
+    while keeping context windows manageable for embeddings and QA. If fewer than
+    `min_tail_words` new words would remain after a chunk, the chunk is extended
+    to the end of the text instead of emitting a tiny trailing fragment.
     """
     words = text.split()
-    if not words:
-        return
-
+    total = len(words)
     step = max(1, chunk_size - overlap)
-    for start in range(0, len(words), step):
+    start = 0
+    while start < total:
         end = start + chunk_size
-        piece = words[start:end]
-        if not piece:
-            continue
-        yield " ".join(piece)
+        if end >= total or total - end < min_tail_words:
+            yield " ".join(words[start:])
+            return
+        yield " ".join(words[start:end])
+        start += step
+
+
+EXERCISE_HEADING_RE = re.compile(
+    r"(review questions|multiple[- ]choice questions|programming exercises|debugging exercises|"
+    r"interview questions|supplementary problems|programming problems|problems\s+\d+\.\d+)",
+    re.IGNORECASE,
+)
+LEARNING_OBJECTIVE_TAG_RE = re.compile(r"\[LO \d+\.\d+[^\]]*\]")
+NUMBERING_RE = re.compile(r"^\d+\.\d+$")
+QUESTION_SENTENCE_RE = re.compile(
+    r"(?:^|[.?!]\s+|\d[.)]\s+)"
+    r"(?:What|Why|How|Which|Who|Where|When|Explain|Discuss|Describe|Define|Compare|Name|Tell|"
+    r"Do you|Can you|Is|Are|Does|Did|Give|Show|Write|Find)\b[^.?!]{3,250}\?"
+)
+
+
+def is_exercise_chunk(text: str) -> bool:
+    """Heuristically flag question-bank / exercise chunks that rarely hold answers.
+
+    Deliberately conservative (missing an exercise page is cheaper than hiding a
+    real one). Signals: several question-style sentences, learning-objective tags
+    like "[LO 2.2 E]", dense exercise numbering ("2.3 2.4 ..."), or an exercise
+    heading near the start of the chunk (after any running page header).
+    """
+    if text.count("?") >= 5 and len(QUESTION_SENTENCE_RE.findall(text)) >= 3:
+        return True
+    if len(LEARNING_OBJECTIVE_TAG_RE.findall(text)) >= 3:
+        return True
+
+    words = text.split()
+    numbering = sum(1 for word in words if NUMBERING_RE.match(word))
+    if numbering >= 8 and numbering / max(1, len(words)) > 0.25:
+        return True
+
+    return bool(EXERCISE_HEADING_RE.search(text[:120]))
 
 
 def build_page_aware_chunks(
     pages: List[PageText],
     chunk_size: int,
     overlap: int,
+    min_tail_words: Optional[int] = None,
 ) -> List[Tuple[int, str]]:
     """Create chunks while preserving source page numbers.
 
     Each page is chunked independently so page references remain exact in
-    search results and downstream answer highlighting.
+    search results and downstream answer highlighting. Tiny trailing fragments
+    are merged into the previous chunk of the same page.
     """
+    if min_tail_words is None:
+        min_tail_words = settings.min_chunk_words
     page_chunks: List[Tuple[int, str]] = []
     for page in pages:
-        for chunk in chunk_words(page.text, chunk_size=chunk_size, overlap=overlap):
+        for chunk in chunk_words(page.text, chunk_size=chunk_size, overlap=overlap, min_tail_words=min_tail_words):
             page_chunks.append((page.page_number, chunk))
     return page_chunks

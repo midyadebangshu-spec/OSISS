@@ -52,3 +52,41 @@ def test_compute_file_hash_changes_with_content(tmp_path):
     first = compute_file_hash(str(f))
     f.write_bytes(b"two")
     assert compute_file_hash(str(f)) != first
+
+
+def test_chunk_words_merges_tiny_tail():
+    text = " ".join(str(i) for i in range(320))
+    chunks = list(chunk_words(text, chunk_size=300, overlap=50, min_tail_words=40))
+    assert len(chunks) == 1
+    assert len(chunks[0].split()) == 320
+
+
+def test_chunk_words_keeps_substantial_tail():
+    text = " ".join(str(i) for i in range(400))
+    chunks = list(chunk_words(text, chunk_size=300, overlap=50, min_tail_words=40))
+    assert len(chunks) == 2
+    assert chunks[-1].split()[-1] == "399"
+
+
+def test_chunk_words_no_redundant_tail_chunk():
+    text = " ".join(str(i) for i in range(300))
+    assert len(list(chunk_words(text, chunk_size=300, overlap=50))) == 1
+
+
+def test_is_exercise_chunk_positive_examples():
+    from utils import is_exercise_chunk
+
+    assert is_exercise_chunk("40 Data Structures Using C Exercises Review Questions 1. Discuss the structure of a C program.")
+    assert is_exercise_chunk("[LO 2.2 E] 2.3 [LO 2.2 H] 2.4 [LO 2.3 M] 2.5 [LO 2.2 H]")
+    assert is_exercise_chunk(
+        "1. What is a stack? 2. Why use queues? 3. How is a tree traversed? 4. Which sort is fastest? 5. Explain hashing?"
+    )
+
+
+def test_is_exercise_chunk_negative_examples():
+    from utils import is_exercise_chunk
+
+    assert not is_exercise_chunk("A stack is a linear data structure in which insertion and deletion happen at one end.")
+    assert not is_exercise_chunk("sorrows and problems of life, or humbly confident, looking up to the God they dared to call")
+    rhetorical = "The future is uncertain. Will it rain tomorrow? Will the team win? Will prices rise? Will I pass? Will it end?"
+    assert not is_exercise_chunk(rhetorical)

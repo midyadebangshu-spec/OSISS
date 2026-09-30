@@ -41,6 +41,9 @@ class Settings:
     chunk_size_words: int = int(os.getenv("CHUNK_SIZE_WORDS", "300"))
     chunk_overlap_words: int = int(os.getenv("CHUNK_OVERLAP_WORDS", "50"))
 
+    min_chunk_words: int = int(os.getenv("MIN_CHUNK_WORDS", "40"))
+    exclude_exercises: bool = os.getenv("EXCLUDE_EXERCISES", "true").lower() in {"1", "true", "yes"}
+
     min_qa_score: float = float(os.getenv("MIN_QA_SCORE", "0.0"))
 
     hybrid_keyword_boost: float = float(os.getenv("HYBRID_KEYWORD_BOOST", "0.01"))

@@ -58,6 +58,8 @@ def run(questions: List[Dict], mode: str, depth: int) -> int:
     hits = {k: 0 for k in ks}
     reciprocal = 0.0
     answer_hits = 0
+    exercise_results = 0
+    total_results = 0
     per_lang: Dict[str, List[int]] = {}
     failures = []
 
@@ -68,13 +70,19 @@ def run(questions: List[Dict], mode: str, depth: int) -> int:
             chunks = retrieve_top_chunks(get_es_client(), q["query"], vector, top_k=depth)
             ranked = [(c["source"].get("file_path", ""), int(c["source"].get("page_number") or 0)) for c in chunks]
             texts = [c["source"].get("text", "") for c in chunks]
+            chunk_texts = texts
         else:
             result = search_and_extract(q["query"], top_k=depth)
             ranked = [
                 (r["source"].get("file_path", ""), int(r["source"].get("page_number") or 0)) for r in result["results"]
             ]
             texts = [f"{r['quote']} {r['matched_paragraph']}" for r in result["results"]]
+            chunk_texts = [r["chunk_preview"] for r in result["results"]]
 
+        from utils import is_exercise_chunk
+
+        exercise_results += sum(is_exercise_chunk(t) for t in chunk_texts[:3])
+        total_results += len(chunk_texts[:3])
         rank = next((i for i, (f, p) in enumerate(ranked, 1) if is_match(q, f, p)), None)
         for k in ks:
             hits[k] += bool(rank and rank <= k)
@@ -90,6 +98,7 @@ def run(questions: List[Dict], mode: str, depth: int) -> int:
     for k in ks:
         print(f"  hit@{k}: {hits[k] / n:.2f}")
     print(f"  MRR:   {reciprocal / n:.3f}")
+    print(f"  exercise chunks in top 3: {exercise_results}/{total_results} ({exercise_results / max(1, total_results):.1%})")
     if mode == "full":
         print(f"  top-1 answer contains keyword: {answer_hits / n:.2f}")
     for lang, values in sorted(per_lang.items()):

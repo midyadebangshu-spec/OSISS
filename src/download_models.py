@@ -19,6 +19,10 @@ MODEL_SPECS = [
         "repo_id": "deepset/xlm-roberta-large-squad2",
         "local_dir": settings.qa_model_path,
     },
+    {
+        "repo_id": "BAAI/bge-reranker-v2-m3",
+        "local_dir": settings.reranker_model_path,
+    },
 ]
 
 

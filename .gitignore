@@ -35,3 +35,7 @@ frontend/dist/
 # Local env files
 .env
 .env.*
+
+# code-review-graph
+.code-review-graph/
+.mcp.json

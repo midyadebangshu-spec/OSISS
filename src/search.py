@@ -16,6 +16,23 @@ from transformers import AutoModelForQuestionAnswering, AutoTokenizer, XLMRobert
 
 from clients import get_elasticsearch_client
 from config import settings
+from ranking import (
+    best_answer_span,
+    dedupe_candidates,
+    keyword_fields,
+    keyword_query_text,
+    locate_subsequence,
+    mmr_select,
+    normalize_query,
+    plan_token_windows,
+    reciprocal_rank_fusion,
+)
+from utils import detect_language_code
+
+# Extractive QA windowing for the manual runner (same defaults as the Transformers QA pipeline).
+QA_MAX_SEQ_LEN = 384
+QA_DOC_STRIDE = 128
+QA_MAX_QUESTION_TOKENS = 64
 
 
 def resolve_runtime_devices() -> tuple[str, int]:
@@ -69,83 +86,148 @@ def build_qa_runner(qa_device: int) -> Callable[[str, str], Dict]:
     model = AutoModelForQuestionAnswering.from_pretrained(settings.qa_model_path, local_files_only=True)
     model.to(device)
     model.eval()
+    return make_windowed_qa_runner(tokenizer, model, device)
 
-    def run_manual_qa(question: str, context: str) -> Dict:
-        encoded = tokenizer(
-            question,
-            context,
-            return_tensors="pt",
-            truncation="only_second",
-            max_length=512,
-            return_offsets_mapping=True,
-        )
 
-        offset_mapping = encoded.pop("offset_mapping")[0]
-        sequence_ids = encoded.sequence_ids(0)
-        model_inputs = {key: value.to(device) for key, value in encoded.items()}
+def make_windowed_qa_runner(tokenizer, model, device) -> Callable[[str, str], Dict]:
+    """QA over overlapping token windows, so long chunks are read to the end.
 
+    Works with slow (SentencePiece) tokenizers, which have no offset mapping:
+    the context is tokenized word by word and answers map back to whole words.
+    """
+    num_special = tokenizer.num_special_tokens_to_add(pair=True)
+    pad_id = tokenizer.pad_token_id if tokenizer.pad_token_id is not None else 0
+    use_token_types = "token_type_ids" in getattr(tokenizer, "model_input_names", [])
+
+    def run_windowed_qa(question: str, context: str) -> Dict:
+        empty = {"answer": "", "score": 0.0, "start": -1, "end": -1}
+        word_spans = [match.span() for match in re.finditer(r"\S+", context)]
+        if not word_spans:
+            return empty
+
+        question_ids = tokenizer(question, add_special_tokens=False)["input_ids"][:QA_MAX_QUESTION_TOKENS]
+        word_ids = tokenizer([context[s:e] for s, e in word_spans], add_special_tokens=False)["input_ids"]
+        budget = max(1, QA_MAX_SEQ_LEN - len(question_ids) - num_special)
+        windows = plan_token_windows([max(1, len(ids)) for ids in word_ids], budget, QA_DOC_STRIDE)
+
+        batch = []
+        for first_word, end_word in windows:
+            context_ids: List[int] = []
+            owners: List[int] = []
+            for word_index in range(first_word, end_word):
+                context_ids.extend(word_ids[word_index])
+                owners.extend([word_index] * len(word_ids[word_index]))
+            context_ids, owners = context_ids[:budget], owners[:budget]
+            if not context_ids:
+                continue
+            input_ids = tokenizer.build_inputs_with_special_tokens(question_ids, context_ids)
+            token_types = (
+                tokenizer.create_token_type_ids_from_sequences(question_ids, context_ids) if use_token_types else None
+            )
+            batch.append((input_ids, token_types, locate_subsequence(input_ids, context_ids), owners))
+        if not batch:
+            return empty
+
+        width = max(len(input_ids) for input_ids, _, _, _ in batch)
+        input_tensor = torch.full((len(batch), width), pad_id, dtype=torch.long)
+        attention_mask = torch.zeros_like(input_tensor)
+        type_tensor = torch.zeros_like(input_tensor)
+        for row, (input_ids, token_types, _, _) in enumerate(batch):
+            input_tensor[row, : len(input_ids)] = torch.tensor(input_ids, dtype=torch.long)
+            attention_mask[row, : len(input_ids)] = 1
+            if token_types is not None:
+                type_tensor[row, : len(token_types)] = torch.tensor(token_types, dtype=torch.long)
+
+        model_inputs = {"input_ids": input_tensor.to(device), "attention_mask": attention_mask.to(device)}
+        if use_token_types:
+            model_inputs["token_type_ids"] = type_tensor.to(device)
         with torch.no_grad():
             outputs = model(**model_inputs)
+        start_logits = outputs.start_logits.float().cpu().numpy()
+        end_logits = outputs.end_logits.float().cpu().numpy()
 
-        start_logits = outputs.start_logits[0]
-        end_logits = outputs.end_logits[0]
+        best: Optional[Tuple[int, int, float]] = None
+        for row, (_, _, offset, owners) in enumerate(batch):
+            positions = list(range(offset, offset + len(owners)))
+            start, end, score = best_answer_span(start_logits[row], end_logits[row], positions)
+            if best is None or score > best[2]:
+                best = (owners[start - offset], owners[end - offset], score)
 
-        context_token_indices = [idx for idx, seq_id in enumerate(sequence_ids) if seq_id == 1]
-        if not context_token_indices:
-            return {"answer": "", "score": 0.0, "start": -1, "end": -1}
+        first_word, last_word, score = best
+        start_char, end_char = word_spans[first_word][0], word_spans[last_word][1]
+        return {"answer": context[start_char:end_char], "score": score, "start": start_char, "end": end_char}
 
-        best_start = max(context_token_indices, key=lambda i: float(start_logits[i]))
-        candidate_ends = [i for i in context_token_indices if i >= best_start]
-        best_end = max(candidate_ends, key=lambda i: float(end_logits[i])) if candidate_ends else best_start
+    return run_windowed_qa
 
-        start_char = int(offset_mapping[best_start][0])
-        end_char = int(offset_mapping[best_end][1])
-        answer = context[start_char:end_char].strip()
 
-        score = float(torch.sigmoid(start_logits[best_start]) * torch.sigmoid(end_logits[best_end]))
-        return {
-            "answer": answer,
-            "score": score,
-            "start": start_char,
-            "end": end_char,
+def exercise_exclusion() -> Optional[Dict]:
+    """Bool clause hiding exercise chunks, or None when they are included."""
+    if not settings.exclude_exercises:
+        return None
+    return {"must_not": [{"term": {"is_exercise": True}}]}
+
+
+def build_keyword_query(query_text: str, boost: float = 1.0) -> Dict:
+    """BM25 query over the standard field plus the query language's analyzed subfield."""
+    text = keyword_query_text(query_text, strip_stopwords=settings.query_stopwords)
+    fields = keyword_fields(detect_language_code(query_text), settings.language_analyzers)
+    if fields == ["text"]:
+        clause: Dict = {"match": {"text": {"query": text, "boost": boost}}}
+    else:
+        clause = {
+            "multi_match": {"query": text, "fields": fields, "type": "best_fields", "tie_breaker": 0.3, "boost": boost}
         }
+    exclusion = exercise_exclusion()
+    return {"bool": {"must": [clause], **exclusion}} if exclusion else clause
 
-    return run_manual_qa
+
+def build_knn(query_vector: List[float], k: int, num_candidates: int) -> Dict:
+    knn: Dict = {"field": "embedding", "query_vector": query_vector, "k": k, "num_candidates": num_candidates}
+    exclusion = exercise_exclusion()
+    if exclusion:
+        knn["filter"] = {"bool": exclusion}
+    return knn
+
+
+def to_candidate(hit: Dict, score: float) -> Dict:
+    return {"id": hit.get("_id"), "score": score, "source": hit.get("_source", {})}
 
 
 def retrieve_top_chunks(es_client, query_text: str, query_vector: List[float], top_k: int = 3) -> List[Dict]:
-    """Retrieve top-k chunks using hybrid kNN (semantic) + BM25 (keyword) scoring."""
-    keyword_query: Dict = {"match": {"text": {"query": query_text, "boost": settings.hybrid_keyword_boost}}}
-    knn_filter: Optional[Dict] = None
-    if settings.exclude_exercises:
-        exclusion = {"must_not": [{"term": {"is_exercise": True}}]}
-        keyword_query = {"bool": {"must": [keyword_query], **exclusion}}
-        knn_filter = {"bool": exclusion}
+    """Retrieve top-k chunks by hybrid kNN (semantic) + BM25 (keyword) retrieval.
 
-    knn: Dict = {
-        "field": "embedding",
-        "query_vector": query_vector,
-        "k": top_k,
-        "num_candidates": max(10, top_k * 10),
-    }
-    if knn_filter:
-        knn["filter"] = knn_filter
+    HYBRID_MODE=rrf (default) runs both searches and fuses them by rank;
+    HYBRID_MODE=sum adds kNN and boosted BM25 scores in one query.
+    """
+    if settings.hybrid_mode == "sum":
+        response = es_client.search(
+            index=settings.elasticsearch_index,
+            query=build_keyword_query(query_text, boost=settings.hybrid_keyword_boost),
+            knn=build_knn(query_vector, top_k, max(10, top_k * 10)),
+            size=top_k,
+        )
+        hits = response.get("hits", {}).get("hits", [])
+        return [to_candidate(hit, hit.get("_score", 0.0)) for hit in hits]
 
-    response = es_client.search(
+    window = max(top_k, settings.retrieval_candidates)
+    dense = es_client.search(
         index=settings.elasticsearch_index,
-        query=keyword_query,
-        knn=knn,
-        size=top_k,
+        knn=build_knn(query_vector, window, min(10000, max(100, window * 10))),
+        size=window,
     )
+    keyword = es_client.search(index=settings.elasticsearch_index, query=build_keyword_query(query_text), size=window)
+    dense_hits = dense.get("hits", {}).get("hits", [])
+    keyword_hits = keyword.get("hits", {}).get("hits", [])
 
-    hits = response.get("hits", {}).get("hits", [])
-    return [
-        {
-            "score": hit.get("_score", 0.0),
-            "source": hit.get("_source", {}),
-        }
-        for hit in hits
-    ]
+    hits_by_id: Dict[str, Dict] = {}
+    for hit in dense_hits + keyword_hits:
+        hits_by_id.setdefault(hit["_id"], hit)
+    fused = reciprocal_rank_fusion(
+        [[hit["_id"] for hit in dense_hits], [hit["_id"] for hit in keyword_hits]],
+        weights=[1.0, settings.rrf_keyword_weight],
+        k=settings.rrf_k,
+    )
+    return [to_candidate(hits_by_id[doc_id], score) for doc_id, score in fused[:top_k]]
 
 
 def answer_with_qa(qa_runner: Callable[[str, str], Dict], query: str, chunk_text: str) -> Dict:
@@ -297,16 +379,25 @@ def rerank_candidates(query: str, candidates: List[Dict]) -> List[Dict]:
     return sorted(candidates, key=lambda item: item["rerank_score"], reverse=True)
 
 
+def diversify_candidates(candidates: List[Dict], limit: int) -> List[Dict]:
+    """Drop same-page / near-duplicate chunks, then pick `limit` with MMR."""
+    if settings.dedupe_results:
+        candidates = dedupe_candidates(candidates)
+    return mmr_select(candidates, limit, settings.mmr_lambda)
+
+
 def search_and_extract(query: str, top_k: int = 3) -> Dict:
     """Full search pipeline from query embedding to extractive answer JSON."""
     es_client = get_es_client()
     embedder, qa_runner = get_models()
 
+    query = normalize_query(query)
     query_embedding = embedder.encode([query], normalize_embeddings=True, convert_to_numpy=True)[0].tolist()
     candidates = retrieve_top_chunks(
         es_client, query, query_embedding, top_k=max(top_k, settings.retrieval_candidates)
     )
-    candidates = rerank_candidates(query, candidates)[:top_k]
+    candidates = rerank_candidates(query, candidates)
+    candidates = diversify_candidates(candidates, top_k + max(0, settings.qa_extra_candidates))
 
     if not candidates:
         return {
@@ -362,7 +453,7 @@ def search_and_extract(query: str, top_k: int = 3) -> Dict:
     enriched_results.sort(key=final_score, reverse=True)
     return {
         "query": query,
-        "results": enriched_results,
+        "results": enriched_results[:top_k],
     }
 
 

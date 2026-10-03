@@ -47,6 +47,19 @@ class Settings:
     min_qa_score: float = float(os.getenv("MIN_QA_SCORE", "0.0"))
 
     hybrid_keyword_boost: float = float(os.getenv("HYBRID_KEYWORD_BOOST", "0.01"))
+    # "rrf": separate kNN and BM25 queries fused by rank; "sum": one query adding kNN + boost * BM25 scores.
+    hybrid_mode: str = os.getenv("HYBRID_MODE", "rrf").lower()
+    rrf_k: int = int(os.getenv("RRF_K", "60"))
+    rrf_keyword_weight: float = float(os.getenv("RRF_KEYWORD_WEIGHT", "1.0"))
+    # BM25 also searches the text.bn / text.hi / text.en subfield matching the query language.
+    language_analyzers: bool = os.getenv("LANGUAGE_ANALYZERS", "true").lower() in {"1", "true", "yes"}
+    query_stopwords: bool = os.getenv("QUERY_STOPWORDS", "true").lower() in {"1", "true", "yes"}
+
+    dedupe_results: bool = os.getenv("DEDUPE_RESULTS", "true").lower() in {"1", "true", "yes"}
+    # MMR trade-off between relevance (1.0 = no diversification) and novelty.
+    mmr_lambda: float = float(os.getenv("MMR_LAMBDA", "0.85"))
+    # Extra reranked chunks sent to QA beyond top_k, so a strong QA answer can still make the cut.
+    qa_extra_candidates: int = int(os.getenv("QA_EXTRA_CANDIDATES", "2"))
 
     embedding_dim: int = int(os.getenv("EMBEDDING_DIM", "1024"))
     inference_device: str = os.getenv("INFERENCE_DEVICE", "auto").lower()

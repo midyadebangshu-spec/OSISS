@@ -168,17 +168,28 @@ def exercise_exclusion() -> Optional[Dict]:
 
 
 def build_keyword_query(query_text: str, boost: float = 1.0) -> Dict:
-    """BM25 query over the standard field plus the query language's analyzed subfield."""
+    """BM25 query over the standard field plus the query language's analyzed subfield.
+
+    Bengali/Hindi queries only match chunks of the same language
+    (KEYWORD_SAME_LANGUAGE): against English text their only matchable tokens
+    are stray Latin ones (e.g. the "b" in "Van der Waals b"), which is noise.
+    Cross-language matches are left to the dense search.
+    """
+    language = detect_language_code(query_text)
     text = keyword_query_text(query_text, strip_stopwords=settings.query_stopwords)
-    fields = keyword_fields(detect_language_code(query_text), settings.language_analyzers)
+    fields = keyword_fields(language, settings.language_analyzers)
     if fields == ["text"]:
         clause: Dict = {"match": {"text": {"query": text, "boost": boost}}}
     else:
         clause = {
             "multi_match": {"query": text, "fields": fields, "type": "best_fields", "tie_breaker": 0.3, "boost": boost}
         }
-    exclusion = exercise_exclusion()
-    return {"bool": {"must": [clause], **exclusion}} if exclusion else clause
+
+    query: Dict = {"must": [clause]}
+    if settings.keyword_same_language and language in {"bn", "hi"}:
+        query["filter"] = [{"term": {"language_code": language}}]
+    query.update(exercise_exclusion() or {})
+    return {"bool": query} if len(query) > 1 else clause
 
 
 def build_knn(query_vector: List[float], k: int, num_candidates: int) -> Dict:

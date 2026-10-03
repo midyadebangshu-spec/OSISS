@@ -54,6 +54,18 @@ def init_postgres() -> None:
         connection.close()
 
 
+# BM25 subfields with Elasticsearch's built-in language analyzers (stemming,
+# stopwords, Indic normalization). Search queries the one matching the query.
+TEXT_FIELD_MAPPING = {
+    "type": "text",
+    "fields": {
+        "bn": {"type": "text", "analyzer": "bengali"},
+        "hi": {"type": "text", "analyzer": "hindi"},
+        "en": {"type": "text", "analyzer": "english"},
+    },
+}
+
+
 def init_elasticsearch() -> None:
     """Create Elasticsearch index with dense vector mapping for BGE-M3."""
     client = get_elasticsearch_client()
@@ -72,7 +84,7 @@ def init_elasticsearch() -> None:
                 "is_exercise": {"type": "boolean"},
                 "language_code": {"type": "keyword"},
                 "file_path": {"type": "keyword"},
-                "text": {"type": "text"},
+                "text": TEXT_FIELD_MAPPING,
                 "embedding": {
                     "type": "dense_vector",
                     "dims": settings.embedding_dim,
@@ -84,7 +96,10 @@ def init_elasticsearch() -> None:
     }
 
     if client.indices.exists(index=index_name):
-        client.indices.put_mapping(index=index_name, properties={"is_exercise": {"type": "boolean"}})
+        client.indices.put_mapping(
+            index=index_name,
+            properties={"is_exercise": {"type": "boolean"}, "text": TEXT_FIELD_MAPPING},
+        )
         print(f"[OSISS] Elasticsearch index '{index_name}' already exists (mapping up to date).")
         return
 

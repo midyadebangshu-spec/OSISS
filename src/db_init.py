@@ -17,8 +17,11 @@ CREATE TABLE IF NOT EXISTS books (
     department TEXT,
     file_path TEXT NOT NULL UNIQUE,
     language_code TEXT,
+    file_hash TEXT,
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
+
+ALTER TABLE books ADD COLUMN IF NOT EXISTS file_hash TEXT;
 
 CREATE TABLE IF NOT EXISTS chunks (
     id BIGSERIAL PRIMARY KEY,
@@ -31,6 +34,8 @@ CREATE TABLE IF NOT EXISTS chunks (
     created_at TIMESTAMPTZ DEFAULT NOW(),
     UNIQUE (book_id, chunk_index)
 );
+
+ALTER TABLE chunks ADD COLUMN IF NOT EXISTS is_exercise BOOLEAN NOT NULL DEFAULT FALSE;
 
 CREATE INDEX IF NOT EXISTS idx_chunks_book_id ON chunks(book_id);
 CREATE INDEX IF NOT EXISTS idx_chunks_page_number ON chunks(page_number);
@@ -63,6 +68,8 @@ def init_elasticsearch() -> None:
                 "page_number": {"type": "integer"},
                 "title": {"type": "text"},
                 "author": {"type": "text"},
+                "department": {"type": "keyword"},
+                "is_exercise": {"type": "boolean"},
                 "language_code": {"type": "keyword"},
                 "file_path": {"type": "keyword"},
                 "text": {"type": "text"},
@@ -77,7 +84,8 @@ def init_elasticsearch() -> None:
     }
 
     if client.indices.exists(index=index_name):
-        print(f"[OSISS] Elasticsearch index '{index_name}' already exists.")
+        client.indices.put_mapping(index=index_name, properties={"is_exercise": {"type": "boolean"}})
+        print(f"[OSISS] Elasticsearch index '{index_name}' already exists (mapping up to date).")
         return
 
     client.indices.create(index=index_name, body=mapping)

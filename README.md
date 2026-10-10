@@ -247,7 +247,7 @@ $$\text{score}(D) = \max_f s_f(D) + \tau \sum_{f \neq f^*} s_f(D).$$
 
 ### 6.3 Reciprocal Rank Fusion
 
-For ranked lists $i = 1..m$ with weights $w_i$ (dense $=1$, BM25 $= $ `RRF_KEYWORD_WEIGHT` $=1$) and constant $k = 60$:
+For ranked lists $i = 1..m$ with weights $w_i$ (dense $w=1$; BM25 $w=1$ by default, setting `RRF_KEYWORD_WEIGHT`) and constant $k = 60$:
 
 $$\text{RRF}(d) = \sum_{i} \frac{w_i}{k + \text{rank}_i(d)}.$$
 
@@ -270,7 +270,7 @@ $$J(A,B) = \frac{|A \cap B|}{|A \cup B|}.$$
 
 $$\text{MMR}(d) = \lambda\,\widetilde{\text{rel}}(d) - (1-\lambda)\max_{s \in S}\cos(d, s), \qquad \widetilde{\text{rel}}(d) = \frac{\text{rel}(d)}{\max_{d'} \text{rel}(d')},$$
 
-with $\lambda = $ `MMR_LAMBDA` $= 0.85$, relevance $= r(q,d)$ (negative scores are shifted to start at 0), and $\cos$ computed on the stored chunk embeddings. $\lambda = 1$ turns diversification off.
+with $\lambda = 0.85$ (setting `MMR_LAMBDA`), relevance $= r(q,d)$ (negative scores are shifted to start at 0), and $\cos$ computed on the stored chunk embeddings. $\lambda = 1$ turns diversification off.
 
 ### 6.6 Extractive QA span
 
@@ -306,7 +306,7 @@ $$\text{Indic book} \iff b + h > 0.3\,(b + h + l) \;\Rightarrow\; \text{OCR lang
 
 ### 6.10 Romanized-query confidence fallback
 
-Let $r_1$ be the best rerank score of an ambiguous query searched as typed. With $\theta = $ `TRANSLIT_CONFIDENCE` $= 0.5$, the script rewrites are searched only if $r_1 < \theta$. After reranking the new chunks against their rewrite, every chunk keeps its best score:
+Let $r_1$ be the best rerank score of an ambiguous query searched as typed. With $\theta = 0.5$ (setting `TRANSLIT_CONFIDENCE`), the script rewrites are searched only if $r_1 < \theta$. After reranking the new chunks against their rewrite, every chunk keeps its best score:
 
 $$r(d) = \max\bigl(r_{\text{typed}}(d),\; r_{\text{rewrite}}(d)\bigr),$$
 

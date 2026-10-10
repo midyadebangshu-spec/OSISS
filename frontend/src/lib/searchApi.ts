@@ -24,6 +24,7 @@ type ApiResultShape = {
     results?: Array<{
         exact_quote?: string
         paragraph_text?: string
+        answer_text?: string | null
         quote?: string
         book_title?: string
         author?: string
@@ -44,6 +45,7 @@ function normalizeResponse(payload: ApiResultShape, query: string): SearchRespon
     const normalizedResults = (payload.results ?? []).map((item) => ({
         exact_quote: item.exact_quote ?? item.quote ?? '',
         paragraph_text: item.paragraph_text ?? '',
+        answer_text: item.answer_text ?? undefined,
         book_title: item.book_title ?? item.source?.book_title ?? 'Unknown Title',
         author: item.author ?? item.source?.author ?? 'Unknown Author',
         department: item.department ?? item.source?.department,

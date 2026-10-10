@@ -6,6 +6,7 @@ import hashlib
 import io
 import os
 import re
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from typing import Iterator, List, Optional, Tuple
 
@@ -44,15 +45,7 @@ def compute_file_hash(file_path: str) -> str:
 
 def detect_language_code(text: str) -> str:
     """Guess the dominant language from Unicode script (bn, hi, else en)."""
-    bengali = devanagari = latin = 0
-    for char in text:
-        code = ord(char)
-        if 0x0980 <= code <= 0x09FF:
-            bengali += 1
-        elif 0x0900 <= code <= 0x097F:
-            devanagari += 1
-        elif char.isascii() and char.isalpha():
-            latin += 1
+    bengali, devanagari, latin = _script_counts(text)
     top = max(bengali, devanagari, latin)
     if top == 0 or top == latin:
         return "en"
@@ -121,8 +114,131 @@ def extract_page_image_text(pdf: fitz.Document, page: fitz.Page) -> str:
     return " ".join(ocr_chunks)
 
 
+# Common English function words; real English prose is full of them, legacy-font text
+# (Kruti Dev, Bijoy: Indic text stored as Latin glyph codes) is not.
+_EN_STOPWORDS = frozenset(
+    "the of and a an in to is are was were be been it that this for on with as by at from or which "
+    "can has have not but if when then their its these those we you they he she i".split()
+)
+_INDIC_RANGE = (0x0900, 0x0DFF)
+_PUNCTUATION_RANGE = (0x2000, 0x206F)
+_SAMPLE_PAGES = 12
+_MIN_LAYER_CHARS = 80
+
+
+def _script_counts(text: str) -> Tuple[int, int, int]:
+    """Return (bengali, devanagari, latin) letter counts."""
+    bengali = devanagari = latin = 0
+    for char in text:
+        code = ord(char)
+        if 0x0980 <= code <= 0x09FF:
+            bengali += 1
+        elif 0x0900 <= code <= 0x097F:
+            devanagari += 1
+        elif char.isascii() and char.isalpha():
+            latin += 1
+    return bengali, devanagari, latin
+
+
+def classify_text_layer(text: str) -> str:
+    """Judge a page's PDF text layer: "empty", "good" or "bad" (unusable garbage)."""
+    chars = [char for char in text if not char.isspace()]
+    if len(chars) < _MIN_LAYER_CHARS:
+        return "empty"
+
+    indic = odd = 0
+    for char in chars:
+        code = ord(char)
+        if _INDIC_RANGE[0] <= code <= _INDIC_RANGE[1]:
+            indic += 1
+        elif code > 127 and not (_PUNCTUATION_RANGE[0] <= code <= _PUNCTUATION_RANGE[1]):
+            odd += 1
+    if indic / len(chars) >= 0.3:
+        return "good"
+    # Symbol / dingbat / legacy-glyph soup instead of letters.
+    if odd / len(chars) > 0.12:
+        return "bad"
+
+    tokens = re.findall(r"[a-z']+", text.lower())
+    if len(tokens) >= 30 and sum(token in _EN_STOPWORDS for token in tokens) / len(tokens) < 0.06:
+        return "bad"
+    return "good"
+
+
+def _sample_page_indexes(page_count: int, wanted: int) -> List[int]:
+    """Evenly spaced page indexes, skipping the first and last 5% (covers, indexes)."""
+    low = int(page_count * 0.05)
+    high = max(low + 1, int(page_count * 0.95))
+    span = high - low
+    count = min(wanted, span)
+    return sorted({low + (span * i) // count for i in range(count)})
+
+
+def _render_page(page: fitz.Page) -> Image.Image:
+    """Render a page to a grayscale PIL image for OCR."""
+    pixmap = page.get_pixmap(dpi=settings.ocr_dpi, colorspace=fitz.csGRAY)
+    return Image.frombytes("L", (pixmap.width, pixmap.height), pixmap.samples)
+
+
+def _ocr_image(image: Image.Image, lang: str) -> str:
+    return " ".join(sanitize_text(pytesseract.image_to_string(image, lang=lang)).split())
+
+
+def choose_ocr_language(pdf: fitz.Document) -> Optional[str]:
+    """Decide whether a PDF needs full-page OCR and in which Tesseract language.
+
+    Returns None to keep the normal path (usable text layer + OCR of embedded images), or a
+    language string such as "ben+eng" / "hin+eng" / "eng" when the text layer is garbage or the
+    book is a scan in an Indic script.
+    """
+    if not settings.ocr_fallback or pdf.page_count == 0:
+        return None
+
+    sampled = _sample_page_indexes(pdf.page_count, _SAMPLE_PAGES)
+    verdicts = {index: classify_text_layer(pdf[index].get_text("text")) for index in sampled}
+    good = sum(v == "good" for v in verdicts.values())
+    bad = sum(v == "bad" for v in verdicts.values())
+    if good >= bad and good > 0:
+        return None
+
+    # Garbage or missing text layer: OCR a few pages to see which script the book is in.
+    os.environ.setdefault("OMP_THREAD_LIMIT", "1")
+    bengali = devanagari = latin = 0
+    for index in sampled[:: max(1, len(sampled) // 4)][:4]:
+        counts = _script_counts(_ocr_image(_render_page(pdf[index]), settings.ocr_languages))
+        bengali, devanagari, latin = bengali + counts[0], devanagari + counts[1], latin + counts[2]
+
+    if bengali + devanagari > 0.3 * (bengali + devanagari + latin):
+        return "ben+eng" if bengali >= devanagari else "hin+eng"
+    # Latin text behind a garbage layer needs OCR; an English scan keeps the existing image-OCR path.
+    return "eng" if bad > 0 else None
+
+
+def _ocr_pages(pdf: fitz.Document, lang: str) -> List[PageText]:
+    """OCR every page of a PDF; Tesseract runs in worker threads, rendering stays on this one."""
+    os.environ.setdefault("OMP_THREAD_LIMIT", "1")
+    workers = max(1, settings.ocr_workers)
+    pages: List[PageText] = []
+    total = pdf.page_count
+
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        for batch_start in range(0, total, workers * 2):
+            batch = range(batch_start, min(total, batch_start + workers * 2))
+            futures = [(index, pool.submit(_ocr_image, _render_page(pdf[index]), lang)) for index in batch]
+            for index, future in futures:
+                text = future.result()
+                if text:
+                    pages.append(PageText(page_number=index + 1, text=text))
+            print(f"[OSISS] OCR {min(total, batch_start + workers * 2)}/{total} pages ({lang})", flush=True)
+
+    return pages
+
+
 def extract_pdf_pages(file_path: str) -> List[PageText]:
     """Extract Unicode text per page, including OCR from images.
+
+    Books whose text layer is unusable (legacy-font encodings, symbol garbage, Indic scans) are
+    OCRed page by page instead; see `choose_ocr_language`.
 
     Raises an exception for unreadable/corrupted PDFs so callers can decide
     whether to skip or stop.
@@ -130,6 +246,11 @@ def extract_pdf_pages(file_path: str) -> List[PageText]:
     pages: List[PageText] = []
 
     with fitz.open(file_path) as pdf:
+        ocr_lang = choose_ocr_language(pdf)
+        if ocr_lang:
+            print(f"[OSISS] Unusable text layer in '{os.path.basename(file_path)}'; full-page OCR ({ocr_lang}).")
+            return _ocr_pages(pdf, ocr_lang)
+
         for index, page in enumerate(pdf):
             raw_text = sanitize_text(page.get_text("text"))
             ocr_text = extract_page_image_text(pdf, page)

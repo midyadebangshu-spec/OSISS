@@ -333,7 +333,8 @@
    }
   ],
   "answer_contains": "Intramolecular",
-  "id": "q24"
+  "id": "q24",
+  "group": "hi->en"
  },
  {
   "query": "विशिष्ट घूर्णन की परिभाषा क्या है?",
@@ -347,7 +348,8 @@
    }
   ],
   "answer_contains": "Specific rotation",
-  "id": "q25"
+  "id": "q25",
+  "group": "hi->en"
  },
  {
   "query": "এনট্রপি কী?",
@@ -361,7 +363,8 @@
    }
   ],
   "answer_contains": "measure of the disorder",
-  "id": "q26"
+  "id": "q26",
+  "group": "bn->en"
  },
  {
   "query": "ভ্যান ডার ওয়ালস সমীকরণে b ধ্রুবক কী নির্দেশ করে?",
@@ -375,7 +378,8 @@
    }
   ],
   "answer_contains": "effective size of gas molecules",
-  "id": "q27"
+  "id": "q27",
+  "group": "bn->en"
  },
  {
   "query": "What is a stack?",
@@ -534,7 +538,14 @@
    {
     "file": "Balagurusamy",
     "pages": [
+     578,
      579
+    ]
+   },
+   {
+    "file": "REEMA THAREJA",
+    "pages": [
+     48
     ]
    }
   ],
@@ -554,5 +565,1172 @@
   ],
   "answer_contains": "switch statement",
   "id": "q38"
+ },
+ {
+  "query": "কলা কাকে বলে?",
+  "lang": "bn",
+  "expected": [
+   {
+    "file": "Bigyan_Bengali",
+    "pages": [
+     84,
+     85,
+     89
+    ]
+   }
+  ],
+  "answer_contains": "কলা বলে",
+  "id": "q39"
+ },
+ {
+  "query": "ভৌতিক ধর্ম কাকে বলে?",
+  "lang": "bn",
+  "expected": [
+   {
+    "file": "Bigyan_Bengali",
+    "pages": [
+     35
+    ]
+   }
+  ],
+  "answer_contains": "ভৌতিক ধর্ম বলে",
+  "id": "q40"
+ },
+ {
+  "query": "মধ্যাকর্ষণ কাকে বলে?",
+  "lang": "bn",
+  "expected": [
+   {
+    "file": "Bigyan_Bengali",
+    "pages": [
+     154
+    ]
+   }
+  ],
+  "answer_contains": "মধ্যাকর্ষন (gravity) বলে",
+  "id": "q41"
+ },
+ {
+  "query": "অনুদৈর্ঘ্য তরঙ্গ কাকে বলে?",
+  "lang": "bn",
+  "expected": [
+   {
+    "file": "Bigyan_Bengali",
+    "pages": [
+     174,
+     185
+    ]
+   }
+  ],
+  "answer_contains": "অনুদৈর্ঘ্য তরঙ্গ বলে",
+  "id": "q42"
+ },
+ {
+  "query": "আলোর প্রতিফলন কী?",
+  "lang": "bn",
+  "expected": [
+   {
+    "file": "West-Bengal-Class-7",
+    "pages": [
+     36
+    ]
+   }
+  ],
+  "answer_contains": "আলোর প্রতিফলন (Reflection of light)",
+  "id": "q43"
+ },
+ {
+  "query": "বর্ণালি কাকে বলে?",
+  "lang": "bn",
+  "expected": [
+   {
+    "file": "West-Bengal-Class-7",
+    "pages": [
+     45
+    ]
+   }
+  ],
+  "answer_contains": "একসঙ্গে বলে “বর্ণালি",
+  "id": "q44"
+ },
+ {
+  "query": "প্রতিস্থাপন বিক্রিয়া কাকে বলে?",
+  "lang": "bn",
+  "expected": [
+   {
+    "file": "West-Bengal-Class-7",
+    "pages": [
+     109
+    ]
+   }
+  ],
+  "answer_contains": "প্রতিস্থাপন বিক্রিয়া বলে",
+  "id": "q45"
+ },
+ {
+  "query": "ইলেকট্রনের কক্ষপথ কাকে বলে?",
+  "lang": "bn",
+  "expected": [
+   {
+    "file": "West-Bengal-Class-7",
+    "pages": [
+     97
+    ]
+   }
+  ],
+  "answer_contains": "কক্ষপথ বলে",
+  "id": "q46"
+ },
+ {
+  "query": "সংস্কৃতির অপরিকল্পিত অনুপ্রবেশ কাকে বলে?",
+  "lang": "bn",
+  "expected": [
+   {
+    "file": "HSC_Social",
+    "pages": [
+     344
+    ]
+   }
+  ],
+  "answer_contains": "অপরিকল্পিত অনুপ্রবেশ বলে",
+  "id": "q47"
+ },
+ {
+  "query": "প্রাকৃতিক সম্পদ কখন সম্পত্তি বলে গণ্য হয়?",
+  "lang": "bn",
+  "expected": [
+   {
+    "file": "HSC_Social",
+    "pages": [
+     261
+    ]
+   }
+  ],
+  "answer_contains": "সম্পত্তি বলে পরিগণিত",
+  "id": "q48"
+ },
+ {
+  "query": "প্রাচীন ভারতীয় দার্শনিকরা পদার্থকে কোন পাঁচটি উপাদানে ভাগ করেছিলেন?",
+  "lang": "bn",
+  "expected": [
+   {
+    "file": "Bigyan_Bengali",
+    "pages": [
+     12
+    ]
+   }
+  ],
+  "answer_contains": "পঞ্চতত্ব",
+  "id": "q49"
+ },
+ {
+  "query": "প্রদাহ কী?",
+  "lang": "bn",
+  "expected": [
+   {
+    "file": "Bigyan_Bengali",
+    "pages": [
+     195
+    ]
+   }
+  ],
+  "answer_contains": "প্রদাহ (inflammation)",
+  "id": "q50"
+ },
+ {
+  "query": "वाष्पन किसे कहते हैं?",
+  "lang": "hi",
+  "expected": [
+   {
+    "file": "SCIENCE-HINDI-6TH",
+    "pages": [
+     37,
+     41
+    ]
+   }
+  ],
+  "answer_contains": "वाष्पन कहते हैं",
+  "id": "q51"
+ },
+ {
+  "query": "गति किसे कहते हैं?",
+  "lang": "hi",
+  "expected": [
+   {
+    "file": "SCIENCE-HINDI-6TH",
+    "pages": [
+     94,
+     95,
+     96
+    ]
+   }
+  ],
+  "answer_contains": "गति कहते हैं",
+  "id": "q52"
+ },
+ {
+  "query": "श्रृंखलन क्या है?",
+  "lang": "hi",
+  "expected": [
+   {
+    "file": "Class-X-NCERT",
+    "pages": [
+     78
+    ]
+   },
+   {
+    "file": "NCERT-Hindi-Class-10",
+    "pages": [
+     80
+    ]
+   }
+  ],
+  "answer_contains": "श्रृंखलन (catenation) कहते हैं",
+  "id": "q53"
+ },
+ {
+  "query": "एंजाइम किसे कहते हैं?",
+  "lang": "hi",
+  "expected": [
+   {
+    "file": "Class-X-NCERT",
+    "pages": [
+     115
+    ]
+   },
+   {
+    "file": "NCERT-Hindi-Class-10",
+    "pages": [
+     117
+    ]
+   }
+  ],
+  "answer_contains": "एंजाइम कहते हैं",
+  "id": "q54"
+ },
+ {
+  "query": "प्रबल अम्ल किसे कहते हैं?",
+  "lang": "hi",
+  "expected": [
+   {
+    "file": "Class-X-NCERT",
+    "pages": [
+     39
+    ]
+   },
+   {
+    "file": "NCERT-Hindi-Class-10",
+    "pages": [
+     41
+    ]
+   }
+  ],
+  "answer_contains": "प्रबल अम्ल कहलाते हैं",
+  "id": "q55"
+ },
+ {
+  "query": "प्रकाश का विक्षेपण क्या है?",
+  "lang": "hi",
+  "expected": [
+   {
+    "file": "Class-X-NCERT",
+    "pages": [
+     229
+    ]
+   },
+   {
+    "file": "NCERT-Hindi-Class-10",
+    "pages": [
+     231
+    ]
+   }
+  ],
+  "answer_contains": "विक्षेपण कहलाता",
+  "id": "q56"
+ },
+ {
+  "query": "द्वितीयक कुंडली किसे कहते हैं?",
+  "lang": "hi",
+  "expected": [
+   {
+    "file": "Class-X-NCERT",
+    "pages": [
+     273
+    ]
+   },
+   {
+    "file": "NCERT-Hindi-Class-10",
+    "pages": [
+     275
+    ]
+   }
+  ],
+  "answer_contains": "द्वितीयक कुंडली कहते हैं",
+  "id": "q57"
+ },
+ {
+  "query": "जूल का तापन नियम क्या है?",
+  "lang": "hi",
+  "expected": [
+   {
+    "file": "Class-X-NCERT",
+    "pages": [
+     251
+    ]
+   },
+   {
+    "file": "NCERT-Hindi-Class-10",
+    "pages": [
+     253
+    ]
+   },
+   {
+    "file": "Reduced_Class-10",
+    "pages": [
+     93
+    ]
+   }
+  ],
+  "answer_contains": "जूल का तापन नियम कहते हैं",
+  "id": "q58"
+ },
+ {
+  "query": "सार्वत्रिक विलायक किसे कहा जाता है?",
+  "lang": "hi",
+  "expected": [
+   {
+    "file": "Reduced_Class-10",
+    "pages": [
+     287,
+     299
+    ]
+   }
+  ],
+  "answer_contains": "सार्वत्रिक विलायक",
+  "id": "q59"
+ },
+ {
+  "query": "हीमोग्लोबिन क्या है?",
+  "lang": "hi",
+  "expected": [
+   {
+    "file": "science-class-7",
+    "pages": [
+     141
+    ]
+   }
+  ],
+  "answer_contains": "हीमोग्लोबिन कहते हैं",
+  "id": "q60"
+ },
+ {
+  "query": "पित्ताशय क्या है?",
+  "lang": "hi",
+  "expected": [
+   {
+    "file": "science-class-7",
+    "pages": [
+     29
+    ]
+   }
+  ],
+  "answer_contains": "पित्ताशय कहते हैं",
+  "id": "q61"
+ },
+ {
+  "query": "ऊष्मा का चालक किसे कहते हैं?",
+  "lang": "hi",
+  "expected": [
+   {
+    "file": "science-class-7",
+    "pages": [
+     54
+    ]
+   }
+  ],
+  "answer_contains": "ऊष्मा का चालक कहते हैं",
+  "id": "q62"
+ },
+ {
+  "query": "विद्युत चुंबक किसे कहते हैं?",
+  "lang": "hi",
+  "expected": [
+   {
+    "file": "Reduced_Class-10",
+    "pages": [
+     203
+    ]
+   },
+   {
+    "file": "science-class-7",
+    "pages": [
+     189,
+     191
+    ]
+   }
+  ],
+  "answer_contains": "विद्युत चुंबक कहते हैं",
+  "id": "q63"
+ },
+ {
+  "query": "फिनोटाइप किसे कहते हैं?",
+  "lang": "hi",
+  "expected": [
+   {
+    "file": "Reduced_Class-10",
+    "pages": [
+     263
+    ]
+   }
+  ],
+  "answer_contains": "फिनोटाइप कहा जाता है",
+  "id": "q64"
+ },
+ {
+  "query": "Kola kake bole?",
+  "lang": "bn",
+  "group": "roman-bn",
+  "expected": [
+   {
+    "file": "Bigyan_Bengali",
+    "pages": [
+     84,
+     85,
+     89
+    ]
+   }
+  ],
+  "answer_contains": "কলা বলে",
+  "id": "q65"
+ },
+ {
+  "query": "Bhautik dhormo kake bole?",
+  "lang": "bn",
+  "group": "roman-bn",
+  "expected": [
+   {
+    "file": "Bigyan_Bengali",
+    "pages": [
+     35
+    ]
+   }
+  ],
+  "answer_contains": "ভৌতিক ধর্ম বলে",
+  "id": "q66"
+ },
+ {
+  "query": "Modhyakorshon kake bole",
+  "lang": "bn",
+  "group": "roman-bn",
+  "expected": [
+   {
+    "file": "Bigyan_Bengali",
+    "pages": [
+     154
+    ]
+   }
+  ],
+  "answer_contains": "মধ্যাকর্ষন (gravity) বলে",
+  "id": "q67"
+ },
+ {
+  "query": "Anudoirghyo torongo kake bole?",
+  "lang": "bn",
+  "group": "roman-bn",
+  "expected": [
+   {
+    "file": "Bigyan_Bengali",
+    "pages": [
+     174,
+     185
+    ]
+   }
+  ],
+  "answer_contains": "অনুদৈর্ঘ্য তরঙ্গ বলে",
+  "id": "q68"
+ },
+ {
+  "query": "Alor protifolon ki?",
+  "lang": "bn",
+  "group": "roman-bn",
+  "expected": [
+   {
+    "file": "West-Bengal-Class-7",
+    "pages": [
+     36
+    ]
+   }
+  ],
+  "answer_contains": "আলোর প্রতিফলন (Reflection of light)",
+  "id": "q69"
+ },
+ {
+  "query": "Bornali kake bole",
+  "lang": "bn",
+  "group": "roman-bn",
+  "expected": [
+   {
+    "file": "West-Bengal-Class-7",
+    "pages": [
+     45
+    ]
+   }
+  ],
+  "answer_contains": "একসঙ্গে বলে “বর্ণালি",
+  "id": "q70"
+ },
+ {
+  "query": "Protisthapon bikriya kake bole?",
+  "lang": "bn",
+  "group": "roman-bn",
+  "expected": [
+   {
+    "file": "West-Bengal-Class-7",
+    "pages": [
+     109
+    ]
+   }
+  ],
+  "answer_contains": "প্রতিস্থাপন বিক্রিয়া বলে",
+  "id": "q71"
+ },
+ {
+  "query": "Electroner kokkhopoth kake bole?",
+  "lang": "bn",
+  "group": "roman-bn",
+  "expected": [
+   {
+    "file": "West-Bengal-Class-7",
+    "pages": [
+     97
+    ]
+   }
+  ],
+  "answer_contains": "কক্ষপথ বলে",
+  "id": "q72"
+ },
+ {
+  "query": "Sanskritir aporikolpito onuprobesh kake bole?",
+  "lang": "bn",
+  "group": "roman-bn",
+  "expected": [
+   {
+    "file": "HSC_Social",
+    "pages": [
+     344
+    ]
+   }
+  ],
+  "answer_contains": "অপরিকল্পিত অনুপ্রবেশ বলে",
+  "id": "q73"
+ },
+ {
+  "query": "Prakritik sompod kokhon sompotti bole gonno hoy?",
+  "lang": "bn",
+  "group": "roman-bn",
+  "expected": [
+   {
+    "file": "HSC_Social",
+    "pages": [
+     261
+    ]
+   }
+  ],
+  "answer_contains": "সম্পত্তি বলে পরিগণিত",
+  "id": "q74"
+ },
+ {
+  "query": "Prachin bharotiyo darshonikra podarthoke kon pancho upadane bhag korechilen?",
+  "lang": "bn",
+  "group": "roman-bn",
+  "expected": [
+   {
+    "file": "Bigyan_Bengali",
+    "pages": [
+     12
+    ]
+   }
+  ],
+  "answer_contains": "পঞ্চতত্ব",
+  "id": "q75"
+ },
+ {
+  "query": "Prodaho ki?",
+  "lang": "bn",
+  "group": "roman-bn",
+  "expected": [
+   {
+    "file": "Bigyan_Bengali",
+    "pages": [
+     195
+    ]
+   }
+  ],
+  "answer_contains": "প্রদাহ (inflammation)",
+  "id": "q76"
+ },
+ {
+  "query": "Vashpan kise kehte hain?",
+  "lang": "hi",
+  "group": "roman-hi",
+  "expected": [
+   {
+    "file": "SCIENCE-HINDI-6TH",
+    "pages": [
+     37,
+     41
+    ]
+   }
+  ],
+  "answer_contains": "वाष्पन कहते हैं",
+  "id": "q77"
+ },
+ {
+  "query": "Gati kise kehte hain",
+  "lang": "hi",
+  "group": "roman-hi",
+  "expected": [
+   {
+    "file": "SCIENCE-HINDI-6TH",
+    "pages": [
+     94,
+     95,
+     96
+    ]
+   }
+  ],
+  "answer_contains": "गति कहते हैं",
+  "id": "q78"
+ },
+ {
+  "query": "Shrinkhalan kya hai?",
+  "lang": "hi",
+  "group": "roman-hi",
+  "expected": [
+   {
+    "file": "Class-X-NCERT",
+    "pages": [
+     78
+    ]
+   },
+   {
+    "file": "NCERT-Hindi-Class-10",
+    "pages": [
+     80
+    ]
+   }
+  ],
+  "answer_contains": "श्रृंखलन (catenation) कहते हैं",
+  "id": "q79"
+ },
+ {
+  "query": "Enzyme kise kahte hain?",
+  "lang": "hi",
+  "group": "roman-hi",
+  "expected": [
+   {
+    "file": "Class-X-NCERT",
+    "pages": [
+     115
+    ]
+   },
+   {
+    "file": "NCERT-Hindi-Class-10",
+    "pages": [
+     117
+    ]
+   }
+  ],
+  "answer_contains": "एंजाइम कहते हैं",
+  "id": "q80"
+ },
+ {
+  "query": "Prabal amla kise kehte hain?",
+  "lang": "hi",
+  "group": "roman-hi",
+  "expected": [
+   {
+    "file": "Class-X-NCERT",
+    "pages": [
+     39
+    ]
+   },
+   {
+    "file": "NCERT-Hindi-Class-10",
+    "pages": [
+     41
+    ]
+   }
+  ],
+  "answer_contains": "प्रबल अम्ल कहलाते हैं",
+  "id": "q81"
+ },
+ {
+  "query": "Prakash ka vikshepan kya hai?",
+  "lang": "hi",
+  "group": "roman-hi",
+  "expected": [
+   {
+    "file": "Class-X-NCERT",
+    "pages": [
+     229
+    ]
+   },
+   {
+    "file": "NCERT-Hindi-Class-10",
+    "pages": [
+     231
+    ]
+   }
+  ],
+  "answer_contains": "विक्षेपण कहलाता",
+  "id": "q82"
+ },
+ {
+  "query": "Dwitiyak kundali kise kehte hain?",
+  "lang": "hi",
+  "group": "roman-hi",
+  "expected": [
+   {
+    "file": "Class-X-NCERT",
+    "pages": [
+     273
+    ]
+   },
+   {
+    "file": "NCERT-Hindi-Class-10",
+    "pages": [
+     275
+    ]
+   }
+  ],
+  "answer_contains": "द्वितीयक कुंडली कहते हैं",
+  "id": "q83"
+ },
+ {
+  "query": "Joule ka tapan niyam kya hai?",
+  "lang": "hi",
+  "group": "roman-hi",
+  "expected": [
+   {
+    "file": "Class-X-NCERT",
+    "pages": [
+     251
+    ]
+   },
+   {
+    "file": "NCERT-Hindi-Class-10",
+    "pages": [
+     253
+    ]
+   },
+   {
+    "file": "Reduced_Class-10",
+    "pages": [
+     93
+    ]
+   }
+  ],
+  "answer_contains": "जूल का तापन नियम कहते हैं",
+  "id": "q84"
+ },
+ {
+  "query": "Sarvatrik vilayak kise kaha jata hai?",
+  "lang": "hi",
+  "group": "roman-hi",
+  "expected": [
+   {
+    "file": "Reduced_Class-10",
+    "pages": [
+     287,
+     299
+    ]
+   }
+  ],
+  "answer_contains": "सार्वत्रिक विलायक",
+  "id": "q85"
+ },
+ {
+  "query": "Hemoglobin kya hai?",
+  "lang": "hi",
+  "group": "roman-hi",
+  "expected": [
+   {
+    "file": "science-class-7",
+    "pages": [
+     141
+    ]
+   }
+  ],
+  "answer_contains": "हीमोग्लोबिन कहते हैं",
+  "id": "q86"
+ },
+ {
+  "query": "Pittashay kya hai?",
+  "lang": "hi",
+  "group": "roman-hi",
+  "expected": [
+   {
+    "file": "science-class-7",
+    "pages": [
+     29
+    ]
+   }
+  ],
+  "answer_contains": "पित्ताशय कहते हैं",
+  "id": "q87"
+ },
+ {
+  "query": "Ushma ka chalak kise kehte hain?",
+  "lang": "hi",
+  "group": "roman-hi",
+  "expected": [
+   {
+    "file": "science-class-7",
+    "pages": [
+     54
+    ]
+   }
+  ],
+  "answer_contains": "ऊष्मा का चालक कहते हैं",
+  "id": "q88"
+ },
+ {
+  "query": "Vidyut chumbak kise kehte hain?",
+  "lang": "hi",
+  "group": "roman-hi",
+  "expected": [
+   {
+    "file": "Reduced_Class-10",
+    "pages": [
+     203
+    ]
+   },
+   {
+    "file": "science-class-7",
+    "pages": [
+     189,
+     191
+    ]
+   }
+  ],
+  "answer_contains": "विद्युत चुंबक कहते हैं",
+  "id": "q89"
+ },
+ {
+  "query": "Phenotype kise kehte hain?",
+  "lang": "hi",
+  "group": "roman-hi",
+  "expected": [
+   {
+    "file": "Reduced_Class-10",
+    "pages": [
+     263
+    ]
+   }
+  ],
+  "answer_contains": "फिनोटाइप कहा जाता है",
+  "id": "q90"
+ },
+ {
+  "query": "What is gati in Bengali science book?",
+  "lang": "en",
+  "group": "mixed",
+  "expected": [
+   {
+    "file": "Bigyan_Bengali",
+    "pages": [
+     122
+    ]
+   }
+  ],
+  "answer_contains": "অবস্থানের পরিবর্তনই গতি",
+  "id": "q91"
+ },
+ {
+  "query": "Define kola in biology",
+  "lang": "en",
+  "group": "mixed",
+  "expected": [
+   {
+    "file": "Bigyan_Bengali",
+    "pages": [
+     84,
+     85,
+     89
+    ]
+   }
+  ],
+  "answer_contains": "কলা বলে",
+  "id": "q92"
+ },
+ {
+  "query": "Tell me about vashpan",
+  "lang": "en",
+  "group": "mixed",
+  "expected": [
+   {
+    "file": "SCIENCE-HINDI-6TH",
+    "pages": [
+     37,
+     41
+    ]
+   }
+  ],
+  "answer_contains": "वाष्पन कहते हैं",
+  "id": "q93"
+ },
+ {
+  "query": "What is pittashay in the human body?",
+  "lang": "en",
+  "group": "mixed",
+  "expected": [
+   {
+    "file": "science-class-7",
+    "pages": [
+     29
+    ]
+   }
+  ],
+  "answer_contains": "पित्ताशय कहते हैं",
+  "id": "q94"
+ },
+ {
+  "query": "What is the meaning of bornali in physics?",
+  "lang": "en",
+  "group": "mixed",
+  "expected": [
+   {
+    "file": "West-Bengal-Class-7",
+    "pages": [
+     45
+    ]
+   }
+  ],
+  "answer_contains": "একসঙ্গে বলে “বর্ণালি",
+  "id": "q95"
+ },
+ {
+  "query": "Explain madhyakarshon force",
+  "lang": "en",
+  "group": "mixed",
+  "expected": [
+   {
+    "file": "Bigyan_Bengali",
+    "pages": [
+     154
+    ]
+   }
+  ],
+  "answer_contains": "মধ্যাকর্ষন (gravity) বলে",
+  "id": "q96"
+ },
+ {
+  "query": "Define vikshepan of light",
+  "lang": "en",
+  "group": "mixed",
+  "expected": [
+   {
+    "file": "Class-X-NCERT",
+    "pages": [
+     229
+    ]
+   },
+   {
+    "file": "NCERT-Hindi-Class-10",
+    "pages": [
+     231
+    ]
+   }
+  ],
+  "answer_contains": "विक्षेपण कहलाता",
+  "id": "q97"
+ },
+ {
+  "query": "What is dwitiyak kundali?",
+  "lang": "en",
+  "group": "mixed",
+  "expected": [
+   {
+    "file": "Class-X-NCERT",
+    "pages": [
+     273
+    ]
+   },
+   {
+    "file": "NCERT-Hindi-Class-10",
+    "pages": [
+     275
+    ]
+   }
+  ],
+  "answer_contains": "द्वितीयक कुंडली कहते हैं",
+  "id": "q98"
+ },
+ {
+  "query": "What is prodaho in the human body?",
+  "lang": "en",
+  "group": "mixed",
+  "expected": [
+   {
+    "file": "Bigyan_Bengali",
+    "pages": [
+     195
+    ]
+   }
+  ],
+  "answer_contains": "প্রদাহ (inflammation)",
+  "id": "q99"
+ },
+ {
+  "query": "Explain sarvatrik vilayak in chemistry",
+  "lang": "en",
+  "group": "mixed",
+  "expected": [
+   {
+    "file": "Reduced_Class-10",
+    "pages": [
+     287,
+     299
+    ]
+   }
+  ],
+  "answer_contains": "सार्वत्रिक विलायक",
+  "id": "q100"
+ },
+ {
+  "query": "What are conformers?",
+  "lang": "en",
+  "group": "rare-en",
+  "expected": [
+   {
+    "file": "Stereochemistry",
+    "pages": [
+     10
+    ]
+   }
+  ],
+  "answer_contains": "conformer",
+  "id": "q101"
+ },
+ {
+  "query": "Define isotherm",
+  "lang": "en",
+  "group": "rare-en",
+  "expected": [
+   {
+    "file": "Intermolecular force",
+    "pages": [
+     8
+    ]
+   }
+  ],
+  "answer_contains": "isothermal",
+  "id": "q102"
+ },
+ {
+  "query": "What is the Newman projection?",
+  "lang": "en",
+  "group": "rare-en",
+  "expected": [
+   {
+    "file": "Stereochemistry",
+    "pages": [
+     1
+    ]
+   }
+  ],
+  "answer_contains": "Newmann projection",
+  "id": "q103"
+ },
+ {
+  "query": "What is a sawhorse projection?",
+  "lang": "en",
+  "group": "rare-en",
+  "expected": [
+   {
+    "file": "Stereochemistry",
+    "pages": [
+     1
+    ]
+   }
+  ],
+  "answer_contains": "Sawhorse projection",
+  "id": "q104"
+ },
+ {
+  "query": "What is tail recursion?",
+  "lang": "en",
+  "group": "rare-en",
+  "expected": [
+   {
+    "file": "REEMA THAREJA",
+    "pages": [
+     261
+    ]
+   }
+  ],
+  "answer_contains": "Tail Recursion",
+  "id": "q105"
+ },
+ {
+  "query": "What is a threaded binary tree?",
+  "lang": "en",
+  "group": "rare-en",
+  "expected": [
+   {
+    "file": "REEMA THAREJA",
+    "pages": [
+     325
+    ]
+   }
+  ],
+  "answer_contains": "A threaded binary tree is the same as",
+  "id": "q106"
+ },
+ {
+  "query": "What is an adjacency matrix?",
+  "lang": "en",
+  "group": "rare-en",
+  "expected": [
+   {
+    "file": "REEMA THAREJA",
+    "pages": [
+     402
+    ]
+   }
+  ],
+  "answer_contains": "In an adjacency matrix",
+  "id": "q107"
+ },
+ {
+  "query": "What is the Boltzmann factor?",
+  "lang": "en",
+  "group": "rare-en",
+  "expected": [
+   {
+    "file": "qb.pdf",
+    "pages": [
+     152
+    ]
+   }
+  ],
+  "answer_contains": "Boltzmann",
+  "id": "q108"
+ },
+ {
+  "query": "What is an eclipsed conformation?",
+  "lang": "en",
+  "group": "rare-en",
+  "expected": [
+   {
+    "file": "Stereochemistry",
+    "pages": [
+     11
+    ]
+   }
+  ],
+  "answer_contains": "eclipsed",
+  "id": "q109"
  }
 ]

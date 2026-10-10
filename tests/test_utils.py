@@ -1,9 +1,21 @@
 import os
 import sys
 
+import fitz
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
-from utils import PageText, build_page_aware_chunks, chunk_words, infer_metadata_from_filename, sanitize_text
+import utils
+from utils import (
+    PageText,
+    build_page_aware_chunks,
+    choose_ocr_language,
+    chunk_words,
+    classify_text_layer,
+    extract_pdf_pages,
+    infer_metadata_from_filename,
+    sanitize_text,
+)
 
 
 def test_sanitize_text_strips_nul():
@@ -90,3 +102,67 @@ def test_is_exercise_chunk_negative_examples():
     assert not is_exercise_chunk("sorrows and problems of life, or humbly confident, looking up to the God they dared to call")
     rhetorical = "The future is uncertain. Will it rain tomorrow? Will the team win? Will prices rise? Will I pass? Will it end?"
     assert not is_exercise_chunk(rhetorical)
+
+
+ENGLISH = "The pointer is a variable that contains the address of another variable in the memory of the computer. " * 3
+KRUTI_DEV = "izdk'k ijkorZu ,oa viorZu lery lrg ls 8- Økafrd dks.k ls vki D;k le>rs gS izdk'k ok;q ls dh dk¡p dh IysV esa izos'k djrk gSA " * 3
+BIJOY = "KvwRb weeván àeevwnK Üjbá`b ev ÜhäZzK ev Kb®vcY wbáq Üewk mgm®vq coáZ nq bv| ÜKbbv KvwRb weeván " * 3
+SYMBOLS = "✁✂✄☎✆✝ ✞✟✠✝ ✡✄☛ ❢☞✌✍ ✎✏✑✒ ❡✓✔✕ ✖✓ ✔✗ ✘ ✔✔ ✙✚✛ ✓ ✜✢✣✤ ✂ ✥✦ ✞ ✤ ✬ ✤ ✧★ " * 3
+UNICODE_BENGALI = "এই ক্ষেত্রে গাড়ির গতির বেগ সময় লেখচিত্র দেখানো হয়েছে লেখের প্রকৃতি থেকে বুঝা যায় " * 3
+UNICODE_HINDI = "जनन तंत्र के विषय में जानें नर जनन तंत्र जनन कोशिका उत्पादित करने वाले अंग " * 3
+
+
+def test_classify_text_layer():
+    assert classify_text_layer(ENGLISH) == "good"
+    assert classify_text_layer(UNICODE_BENGALI) == "good"
+    assert classify_text_layer(UNICODE_HINDI) == "good"
+    assert classify_text_layer("short") == "empty"
+    assert classify_text_layer("") == "empty"
+    for garbage in (KRUTI_DEV, BIJOY, SYMBOLS):
+        assert classify_text_layer(garbage) == "bad"
+
+
+def make_pdf(path, page_text: str, pages: int = 20) -> str:
+    doc = fitz.open()
+    for _ in range(pages):
+        doc.new_page().insert_textbox(fitz.Rect(40, 40, 550, 800), page_text, fontsize=8)
+    doc.save(path)
+    doc.close()
+    return str(path)
+
+
+def test_choose_ocr_language(tmp_path, monkeypatch):
+    # Pretend Tesseract reads Devanagari / Bengali / English from the rendered page.
+    ocr_output = {"text": UNICODE_HINDI}
+    monkeypatch.setattr(utils, "_ocr_image", lambda image, lang: ocr_output["text"])
+
+    english_pdf = make_pdf(tmp_path / "en.pdf", ENGLISH)
+    legacy_pdf = make_pdf(tmp_path / "legacy.pdf", KRUTI_DEV)
+
+    with fitz.open(english_pdf) as pdf:
+        assert choose_ocr_language(pdf) is None
+    with fitz.open(legacy_pdf) as pdf:
+        assert choose_ocr_language(pdf) == "hin+eng"
+        ocr_output["text"] = UNICODE_BENGALI
+        assert choose_ocr_language(pdf) == "ben+eng"
+        ocr_output["text"] = ENGLISH
+        assert choose_ocr_language(pdf) == "eng"
+
+    object.__setattr__(utils.settings, "ocr_fallback", False)
+    try:
+        with fitz.open(legacy_pdf) as pdf:
+            assert choose_ocr_language(pdf) is None
+    finally:
+        object.__setattr__(utils.settings, "ocr_fallback", True)
+
+
+def test_extract_pdf_pages_uses_ocr_only_for_bad_layers(tmp_path, monkeypatch):
+    monkeypatch.setattr(utils, "_ocr_image", lambda image, lang: UNICODE_HINDI)
+
+    legacy = extract_pdf_pages(make_pdf(tmp_path / "legacy.pdf", KRUTI_DEV, pages=5))
+    assert [page.page_number for page in legacy] == [1, 2, 3, 4, 5]
+    assert all(page.text == UNICODE_HINDI for page in legacy)
+
+    english = extract_pdf_pages(make_pdf(tmp_path / "en.pdf", ENGLISH, pages=5))
+    assert len(english) == 5
+    assert all("pointer is a variable" in page.text for page in english)

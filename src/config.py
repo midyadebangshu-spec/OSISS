@@ -29,6 +29,20 @@ class Settings:
 
     reranker_model_path: str = os.getenv("RERANKER_MODEL_PATH", "./models/BAAI_bge-reranker-v2-m3")
     rerank_enabled: bool = os.getenv("RERANK_ENABLED", "true").lower() in {"1", "true", "yes"}
+    # Romanized Bengali/Hindi queries ("goti kake bole") are transliterated to native script before searching.
+    translit_enabled: bool = os.getenv("TRANSLIT_ENABLED", "true").lower() in {"1", "true", "yes"}
+    translit_model_path: str = os.getenv(
+        "TRANSLIT_MODEL_PATH", "./models/Singla0009_all-indic-transliteration/indicxlit_ct2_fp32"
+    )
+    # Candidate spellings per word; extra ones are added to the keyword (BM25) query only.
+    translit_topk: int = int(os.getenv("TRANSLIT_TOPK", "3"))
+    # RRF weight of the untransliterated query's results relative to each script variant's (1.0).
+    translit_original_weight: float = float(os.getenv("TRANSLIT_ORIGINAL_WEIGHT", "0.5"))
+    # Ambiguous queries (unknown words, no Indic marker words) are searched as typed first; below this top
+    # rerank score the romanized rewrites are searched too and chunks keep their best score.
+    translit_confidence: float = float(os.getenv("TRANSLIT_CONFIDENCE", "0.5"))
+    # English words (built by src/build_english_vocab.py) used to tell English from romanized queries.
+    english_vocab_path: str = os.getenv("ENGLISH_VOCAB_PATH", "./models/english_vocab.txt")
     retrieval_candidates: int = int(os.getenv("RETRIEVAL_CANDIDATES", "30"))
     # Weight of the QA score when combining it with the rerank score (0 = rerank only, 1 = QA only).
     qa_rank_weight: float = float(os.getenv("QA_RANK_WEIGHT", "0.3"))
@@ -37,6 +51,12 @@ class Settings:
     polling_interval_seconds: int = int(os.getenv("POLLING_INTERVAL_SECONDS", "10"))
 
     ocr_language: str = os.getenv("OCR_LANGUAGE", "eng")
+    # Books whose PDF text layer is unusable (legacy-font encodings, symbol garbage, scans) are OCRed page by page.
+    ocr_fallback: bool = os.getenv("OCR_FALLBACK", "true").lower() in {"1", "true", "yes"}
+    ocr_dpi: int = int(os.getenv("OCR_DPI", "300"))
+    # Tesseract languages tried when probing which script such a book is in.
+    ocr_languages: str = os.getenv("OCR_LANGUAGES", "ben+hin+eng")
+    ocr_workers: int = int(os.getenv("OCR_WORKERS", "8"))
 
     chunk_size_words: int = int(os.getenv("CHUNK_SIZE_WORDS", "300"))
     chunk_overlap_words: int = int(os.getenv("CHUNK_OVERLAP_WORDS", "50"))

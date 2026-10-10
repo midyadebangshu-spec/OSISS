@@ -18,6 +18,7 @@ import json
 import math
 import os
 import sys
+import time
 from typing import Dict, List, Tuple
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "src"))
@@ -90,10 +91,12 @@ def evaluate(questions: List[Dict], mode: str, depth: int) -> Dict:
     exercise_results = 0
     total_results = 0
     per_lang: Dict[str, List[int]] = {}
+    seconds: Dict[str, List[float]] = {}
     failures = []
     cutoff = min(10, depth)
 
     for q in questions:
+        started = time.perf_counter()
         if mode == "retrieval":
             embedder, _ = get_models()
             query = normalize_query(q["query"])
@@ -110,6 +113,7 @@ def evaluate(questions: List[Dict], mode: str, depth: int) -> Dict:
             texts = [f"{r['quote']} {r['matched_paragraph']}" for r in result["results"]]
             chunk_texts = [r["chunk_preview"] for r in result["results"]]
 
+        seconds.setdefault(q.get("group", q["lang"]), []).append(time.perf_counter() - started)
         exercise_results += sum(is_exercise_chunk(t) for t in chunk_texts[:3])
         total_results += len(chunk_texts[:3])
         rank = next((i for i, (f, p) in enumerate(ranked, 1) if is_match(q, f, p)), None)
@@ -119,7 +123,7 @@ def evaluate(questions: List[Dict], mode: str, depth: int) -> Dict:
         ndcg_total += ndcg(q, ranked, cutoff)
         if mode == "full" and texts and norm(q["answer_contains"]) in norm(texts[0]):
             answer_hits += 1
-        per_lang.setdefault(q["lang"], []).append(1 if rank and rank <= 3 else 0)
+        per_lang.setdefault(q.get("group", q["lang"]), []).append(1 if rank and rank <= 3 else 0)
         if rank is None or rank > 3:
             failures.append((q["id"], q["query"], rank))
 
@@ -135,6 +139,7 @@ def evaluate(questions: List[Dict], mode: str, depth: int) -> Dict:
         "answer_hit": answer_hits / n if mode == "full" else None,
         "exercise": (exercise_results, total_results),
         "per_lang": {lang: (sum(v) / len(v), len(v)) for lang, v in sorted(per_lang.items())},
+        "seconds": {lang: sum(v) / len(v) for lang, v in sorted(seconds.items())},
         "failures": failures,
     }
 
@@ -150,7 +155,7 @@ def print_report(metrics: Dict) -> None:
     if metrics["answer_hit"] is not None:
         print(f"  top-1 answer contains keyword: {metrics['answer_hit']:.2f}")
     for lang, (value, count) in metrics["per_lang"].items():
-        print(f"  hit@3 [{lang}]: {value:.2f} ({count} q)")
+        print(f"  hit@3 [{lang}]: {value:.2f} ({count} q, {metrics['seconds'][lang]:.2f}s/query)")
     if metrics["failures"]:
         print("\nMisses (not in top 3):")
         for qid, query, rank in metrics["failures"]:

@@ -48,33 +48,38 @@ and what is still weak.
 
 Two pipelines share one PostgreSQL database (books, chunks) and one Elasticsearch index (text + embeddings).
 
+**Ingestion** (PDF to searchable chunks):
+
 ```mermaid
-flowchart LR
-    subgraph Ingestion
-        A["PDF in data/pdfs"] --> B{"Usable text layer?"}
-        B -- yes --> C["PyMuPDF text + OCR of embedded images"]
-        B -- "no: legacy font / scan" --> D["Full-page OCR, Tesseract ben/hin/eng"]
-        C --> E["Chunk per page: 300 words, 50 overlap"]
-        D --> E
-        E --> F["BGE-M3 embedding, 1024 dim, L2 normalised"]
-        F --> G[("PostgreSQL: books, chunks")]
-        F --> H[("Elasticsearch: text + vector")]
-    end
-    subgraph Search
-        Q["Query"] --> N["Normalise, classify language and script"]
-        N --> R["Romanized? transliterate to bn / hi"]
-        R --> K1["kNN on embedding (cosine)"]
-        R --> K2["BM25 on text + language field"]
-        K1 --> M["RRF fusion"]
-        K2 --> M
-        M --> X["Cross-encoder rerank"]
-        X --> V["Diversify: one chunk per page, Jaccard dedupe, MMR"]
-        V --> QA["Extractive QA on top candidates"]
-        QA --> S["Blend rerank + QA score, take top k"]
-        S --> UI["React UI: highlighted paragraph + PDF page"]
-    end
-    H --> K1
-    H --> K2
+flowchart TD
+    A["PDF in data/pdfs"] --> B{"Usable text layer?"}
+    B -- yes --> C["PyMuPDF text + OCR of embedded images"]
+    B -- "no: legacy font or scan" --> D["Full-page OCR: Tesseract ben / hin / eng"]
+    C --> E["Chunk per page: 300 words, 50 overlap"]
+    D --> E
+    E --> F["BGE-M3 embedding: 1024 dim, L2 normalised"]
+    F --> G[("PostgreSQL: books, chunks")]
+    F --> H[("Elasticsearch: text + vector")]
+```
+
+**Search** (question to highlighted answer):
+
+```mermaid
+flowchart TD
+    Q["Query"] --> N["Normalise, classify language and script"]
+    N --> R{"Romanized?"}
+    R -- yes --> T["Transliterate to Bengali and Devanagari"]
+    R -- no --> K["Search as typed"]
+    T --> K
+    K --> K1["Dense kNN: cosine on embedding"]
+    K --> K2["BM25: text + language field"]
+    K1 --> M["RRF fusion"]
+    K2 --> M
+    M --> X["Cross-encoder rerank"]
+    X --> V["Diversify: one chunk per page, Jaccard dedupe, MMR"]
+    V --> QA["Extractive QA on top candidates"]
+    QA --> S["Blend rerank + QA score, take top k"]
+    S --> UI["React UI: highlighted paragraph + PDF page"]
 ```
 
 * **Ingestion** (`src/ingest.py`, helpers in `src/utils.py`) runs once or as a watcher over `data/pdfs/`.

@@ -48,7 +48,7 @@ class FakeES:
 
 def test_rrf_retrieval_runs_two_searches_and_fuses(override):
     override(hybrid_mode="rrf", retrieval_candidates=5, exclude_exercises=True, language_analyzers=True,
-             query_stopwords=True)
+             query_stopwords=True, keyword_same_language=True)
     es = FakeES(
         dense=[hit("a", "x.pdf", 1, "a"), hit("b", "x.pdf", 2, "b"), hit("c", "x.pdf", 3, "c")],
         keyword=[hit("c", "x.pdf", 3, "c"), hit("d", "x.pdf", 4, "d")],
@@ -64,6 +64,21 @@ def test_rrf_retrieval_runs_two_searches_and_fuses(override):
     assert clause["fields"] == ["text", "text.bn"]
     assert clause["query"] == "আলোর প্রতিফলন"
     assert keyword_call["query"]["bool"]["must_not"] == [{"term": {"is_exercise": True}}]
+    assert keyword_call["query"]["bool"]["filter"] == [{"term": {"language_code": "bn"}}]
+
+
+def test_keyword_language_filter_only_for_bengali_and_hindi(override):
+    override(exclude_exercises=False, language_analyzers=True, keyword_same_language=True)
+    hindi = search.build_keyword_query("विशिष्ट घूर्णन की परिभाषा क्या है?")
+    assert hindi["bool"]["filter"] == [{"term": {"language_code": "hi"}}]
+    assert hindi["bool"]["must"][0]["multi_match"]["fields"] == ["text", "text.hi"]
+
+    english = search.build_keyword_query("What is the van der Waals b constant?")
+    assert "bool" not in english  # no filter, no exclusion: the bare clause
+    assert english["multi_match"]["fields"] == ["text", "text.en"]
+
+    override(keyword_same_language=False)
+    assert "bool" not in search.build_keyword_query("ভ্যান ডার ওয়ালস সমীকরণে b ধ্রুবক কী নির্দেশ করে?")
 
 
 def test_sum_mode_is_one_boosted_query(override):

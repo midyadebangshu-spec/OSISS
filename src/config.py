@@ -74,6 +74,8 @@ class Settings:
     # BM25 also searches the text.bn / text.hi / text.en subfield matching the query language.
     language_analyzers: bool = os.getenv("LANGUAGE_ANALYZERS", "true").lower() in {"1", "true", "yes"}
     query_stopwords: bool = os.getenv("QUERY_STOPWORDS", "true").lower() in {"1", "true", "yes"}
+    # Bengali/Hindi queries: BM25 only over chunks of the same language (cross-language is left to kNN).
+    keyword_same_language: bool = os.getenv("KEYWORD_SAME_LANGUAGE", "true").lower() in {"1", "true", "yes"}
 
     dedupe_results: bool = os.getenv("DEDUPE_RESULTS", "true").lower() in {"1", "true", "yes"}
     # MMR trade-off between relevance (1.0 = no diversification) and novelty.

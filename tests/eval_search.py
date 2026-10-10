@@ -5,7 +5,7 @@ Modes:
   --mode retrieval   page-level retrieval metrics (embedder + Elasticsearch, no QA)
   --mode full        full pipeline: retrieval + QA; adds answer-keyword hit rate
   --compare          table of the search features (HYBRID_MODE, LANGUAGE_ANALYZERS, QUERY_STOPWORDS,
-                     DEDUPE_RESULTS/MMR_LAMBDA, QA_EXTRA_CANDIDATES) toggled on/off
+                     KEYWORD_SAME_LANGUAGE, DEDUPE_RESULTS/MMR_LAMBDA, QA_EXTRA_CANDIDATES) toggled on/off
   --set KEY=VALUE    override a setting for this run, e.g. --set rrf_keyword_weight=0.5
 
 Run from the project root:  .venv/bin/python tests/eval_search.py --mode retrieval
@@ -174,17 +174,20 @@ ALL_ON = {
     "hybrid_mode": "rrf",
     "language_analyzers": True,
     "query_stopwords": True,
+    "keyword_same_language": True,
     "dedupe_results": True,
     "mmr_lambda": 0.85,
     "qa_extra_candidates": 2,
 }
 VARIANTS = [
     ("baseline (all off)", {"hybrid_mode": "sum", "language_analyzers": False, "query_stopwords": False,
-                            "dedupe_results": False, "mmr_lambda": 1.0, "qa_extra_candidates": 0}),
+                            "keyword_same_language": False, "dedupe_results": False, "mmr_lambda": 1.0,
+                            "qa_extra_candidates": 0}),
     ("all on", {}),
     ("A off: score-sum fusion", {"hybrid_mode": "sum"}),
     ("B off: no language fields", {"language_analyzers": False}),
     ("C off: keep question words", {"query_stopwords": False}),
+    ("S off: bn/hi keywords hit all", {"keyword_same_language": False}),
     ("D off: no dedupe / MMR", {"dedupe_results": False, "mmr_lambda": 1.0}),
     ("E off: QA on top_k only", {"qa_extra_candidates": 0}),
 ]
@@ -237,7 +240,7 @@ def compare(questions: List[Dict], mode: str, depth: int, user_overrides: Dict) 
     header += [f"hit@3 {lang}" for lang in langs]
     print(f"\nMode: {mode} | questions: {rows[0][1]['n']} | depth: {depth}")
     if mode == "retrieval":
-        print("(retrieval mode only exercises A-C; D and E act after reranking, use --mode full)")
+        print("(retrieval mode only exercises A-C and S; D and E act after reranking, use --mode full)")
     print(" | ".join(header))
     for name, m in rows:
         cells = [name, *(f"{m['hit'][k]:.2f}" for k in (1, 3, 5)), f"{m['mrr']:.3f}", f"{m['ndcg']:.3f}"]

@@ -1,0 +1,575 @@
+{
+ "_about": "Numbers behind the README tables and docs/images/*.png. Every value was measured on this repo's eval set (tests/eval/questions.json) unless a note says otherwise. Regenerate figures with: python docs/make_figures.py",
+ "eval_set_growth": [
+  {
+   "stage": "Original English corpus, 38 questions",
+   "n": 38,
+   "hit1": 0.89,
+   "hit3": 0.97,
+   "mrr": 0.93,
+   "ndcg3": 0.926,
+   "answer_kw": 0.87,
+   "note": "Starting point of this work."
+  },
+  {
+   "stage": "Same, after widening label q37 (a label fix, not a search change)",
+   "n": 38,
+   "hit1": 0.92,
+   "hit3": 1.0,
+   "mrr": 0.956,
+   "ndcg3": 0.946,
+   "answer_kw": 0.87
+  },
+  {
+   "stage": "After ingesting 9 Bengali/Hindi books (OCR fallback)",
+   "n": 38,
+   "hit1": 0.87,
+   "hit3": 0.97,
+   "mrr": 0.917,
+   "ndcg3": 0.91,
+   "answer_kw": 0.82,
+   "note": "Hindi->English question q25 starts losing to the new Hindi books."
+  },
+  {
+   "stage": "+26 native-script Bengali/Hindi questions",
+   "n": 64,
+   "hit1": 0.86,
+   "hit3": 0.98,
+   "mrr": 0.919,
+   "ndcg3": 0.89,
+   "answer_kw": 0.83
+  },
+  {
+   "stage": "+26 romanized questions, transliteration OFF",
+   "n": 90,
+   "hit1": 0.66,
+   "hit3": 0.79,
+   "mrr": 0.719,
+   "ndcg3": 0.693,
+   "answer_kw": 0.62
+  },
+  {
+   "stage": "+26 romanized questions, transliteration ON",
+   "n": 90,
+   "hit1": 0.82,
+   "hit3": 0.97,
+   "mrr": 0.891,
+   "ndcg3": 0.858,
+   "answer_kw": 0.79
+  },
+  {
+   "stage": "Final: +10 mixed +9 rare-English questions, merged branch",
+   "n": 109,
+   "hit1": 0.81,
+   "hit3": 0.96,
+   "mrr": 0.881,
+   "ndcg3": 0.0,
+   "answer_kw": 0.76,
+   "note": "ndcg3 not recorded for this run."
+  }
+ ],
+ "groups": [
+  "en",
+  "rare-en",
+  "bn",
+  "hi",
+  "bn->en",
+  "hi->en",
+  "roman-bn",
+  "roman-hi",
+  "mixed"
+ ],
+ "group_labels": {
+  "en": "English (34)",
+  "rare-en": "Rare English terms (9)",
+  "bn": "Bengali (12)",
+  "hi": "Hindi (14)",
+  "bn->en": "Bengali to English book (2)",
+  "hi->en": "Hindi to English book (2)",
+  "roman-bn": "Romanized Bengali (12)",
+  "roman-hi": "Romanized Hindi (14)",
+  "mixed": "Mixed English + romanized (10)"
+ },
+ "threshold_sweep": {
+  "_about": "109 questions, full pipeline. 'off' = TRANSLIT_ENABLED=false; 'fallback off' = TRANSLIT_CONFIDENCE=0 (romanized queries with marker words still handled, ambiguous ones never get rewrites).",
+  "settings": [
+   "off",
+   "fallback off (0.0)",
+   "0.5",
+   "0.8",
+   "0.95"
+  ],
+  "overall": {
+   "hit1": [
+    0.62,
+    0.76,
+    0.81,
+    0.81,
+    0.81
+   ],
+   "hit3": [
+    0.78,
+    0.93,
+    0.96,
+    0.96,
+    0.96
+   ],
+   "mrr": [
+    0.697,
+    0.839,
+    0.881,
+    0.881,
+    0.881
+   ],
+   "answer_kw": [
+    0.58,
+    0.72,
+    0.76,
+    0.77,
+    0.77
+   ]
+  },
+  "hit3": {
+   "en": [
+    1.0,
+    1.0,
+    1.0,
+    1.0,
+    1.0
+   ],
+   "rare-en": [
+    1.0,
+    1.0,
+    1.0,
+    1.0,
+    1.0
+   ],
+   "bn": [
+    1.0,
+    1.0,
+    1.0,
+    1.0,
+    1.0
+   ],
+   "hi": [
+    1.0,
+    1.0,
+    1.0,
+    1.0,
+    1.0
+   ],
+   "bn->en": [
+    1.0,
+    1.0,
+    1.0,
+    1.0,
+    1.0
+   ],
+   "hi->en": [
+    0.5,
+    0.5,
+    0.5,
+    0.5,
+    0.5
+   ],
+   "roman-bn": [
+    0.0,
+    0.92,
+    0.92,
+    0.92,
+    0.92
+   ],
+   "roman-hi": [
+    0.57,
+    0.93,
+    0.93,
+    0.93,
+    0.93
+   ],
+   "mixed": [
+    0.5,
+    0.5,
+    0.9,
+    0.9,
+    0.9
+   ]
+  },
+  "seconds_per_query": {
+   "en": [
+    2.18,
+    2.19,
+    2.2,
+    2.28,
+    2.32
+   ],
+   "rare-en": [
+    2.0,
+    2.0,
+    2.23,
+    2.42,
+    2.39
+   ],
+   "bn": [
+    2.67,
+    2.67,
+    2.66,
+    2.73,
+    2.7
+   ],
+   "hi": [
+    2.09,
+    2.09,
+    2.09,
+    2.15,
+    2.1
+   ],
+   "bn->en": [
+    2.27,
+    2.28,
+    2.28,
+    2.28,
+    2.28
+   ],
+   "hi->en": [
+    2.3,
+    2.31,
+    2.31,
+    2.31,
+    2.31
+   ],
+   "roman-bn": [
+    2.9,
+    2.67,
+    2.67,
+    2.73,
+    2.68
+   ],
+   "roman-hi": [
+    2.56,
+    2.57,
+    2.58,
+    2.6,
+    2.58
+   ],
+   "mixed": [
+    2.45,
+    2.44,
+    3.59,
+    3.98,
+    3.98
+   ]
+  }
+ },
+ "final_run": {
+  "_about": "Final merged branch, default settings (TRANSLIT_CONFIDENCE=0.5), 109 questions, full pipeline.",
+  "hit1": 0.81,
+  "hit3": 0.96,
+  "mrr": 0.881,
+  "answer_kw": 0.76,
+  "misses": [
+   "q25 Hindi->English: specific rotation",
+   "q74 long romanized Bengali query",
+   "q80 'Enzyme kise kahte hain?'",
+   "q91 'What is gati in Bengali science book?'"
+  ]
+ },
+ "translit_word_accuracy": {
+  "_about": "Per-word accuracy of the IndicXlit CTranslate2 model, 20 words per language with varied spellings (spike, before wiring it in). Assamese letters in Bengali output were then mapped to Bengali.",
+  "bn": {
+   "top1": 8,
+   "top3": 14,
+   "n": 20,
+   "ms_for_20_words": 57
+  },
+  "hi": {
+   "top1": 13,
+   "top3": 18,
+   "n": 20,
+   "ms_for_20_words": 40
+  }
+ },
+ "rerank_confidence": {
+  "_about": "Top rerank score of the query as typed (no transliteration), used to decide when an ambiguous query gets its romanized rewrites.",
+  "english_34": {
+   "min": 0.408,
+   "p10": 0.825,
+   "median": 0.991,
+   "max": 1.0
+  },
+  "romanized_typed_26": {
+   "min": 0.0,
+   "p10": 0.001,
+   "median": 0.011,
+   "max": 0.827,
+   "below_0.4": 22
+  },
+  "rare_english_extra_10": {
+   "min": 0.004,
+   "median": 0.478,
+   "max": 0.999
+  }
+ },
+ "q25_trace": {
+  "_about": "Where the correct chunk (Stereochemistry p6) sits at each stage, for the Hindi question (q25) and its English translation. null = not in the list.",
+  "stages": [
+   "Dense (cosine)",
+   "BM25",
+   "After RRF",
+   "After rerank",
+   "Kept after diversify"
+  ],
+  "hindi": [
+   1,
+   null,
+   11,
+   16,
+   null
+  ],
+  "english": [
+   1,
+   1,
+   1,
+   1,
+   1
+  ],
+  "cosine_to_correct_chunk": {
+   "Hindi question (q25)": 0.501,
+   "English question": 0.643,
+   "Hindi, question words removed": 0.514,
+   "Hindi + English term": 0.585,
+   "English term only": 0.637
+  },
+  "rerank_score_hindi": 0.004,
+  "rerank_score_english": 0.994
+ },
+ "bm25_weight_sweep": {
+  "_about": "Cross-language questions only (BM25 weight reduced when the question's language differs from the top dense hit's language). RRF rank of the correct chunk; 73 typed questions overall.",
+  "weights": [
+   "1.0 (now)",
+   "0.5",
+   "0.3",
+   "0.1",
+   "~0"
+  ],
+  "rrf_rank": {
+   "q24": [
+    9,
+    9,
+    7,
+    3,
+    1
+   ],
+   "q25": [
+    11,
+    11,
+    10,
+    6,
+    1
+   ],
+   "q26": [
+    1,
+    1,
+    1,
+    1,
+    1
+   ],
+   "q27": [
+    6,
+    4,
+    4,
+    3,
+    3
+   ]
+  },
+  "overall_mrr": [
+   0.902,
+   0.902,
+   0.902,
+   0.903,
+   0.903
+  ],
+  "mismatch_triggered_on": [
+   "q24",
+   "q25",
+   "q26",
+   "q27",
+   "q53 (false alarm)",
+   "q102 (false alarm)"
+  ],
+  "dense_z_at_trigger": {
+   "q24": 4.57,
+   "q25": 3.39,
+   "q26": 12.73,
+   "q27": 5.87,
+   "q53": 2.7,
+   "q102": 2.76
+  }
+ },
+ "variance_experiments": {
+  "_about": "73 typed (non-romanized, non-mixed) questions, retrieval level. z = (s1 - mean(s2..sk)) / std(s2..sk) over a channel's top-30 scores.",
+  "z_top1": {
+   "dense": {
+    "correct_mean": 7.5,
+    "wrong_mean": 4.0,
+    "n_correct": 49,
+    "n_wrong": 24
+   },
+   "bm25": {
+    "correct_mean": 4.82,
+    "wrong_mean": 2.67,
+    "n_correct": 45,
+    "n_wrong": 28
+   }
+  },
+  "fusion": [
+   {
+    "name": "Equal RRF (current)",
+    "hit1": 0.644,
+    "hit3": 0.877,
+    "hit10": 0.959,
+    "mrr": 0.771
+   },
+   {
+    "name": "Dense only",
+    "hit1": 0.671,
+    "hit3": 0.877,
+    "hit10": 0.945,
+    "mrr": 0.778
+   },
+   {
+    "name": "BM25 only",
+    "hit1": 0.63,
+    "hit3": 0.863,
+    "hit10": 0.959,
+    "mrr": 0.745
+   },
+   {
+    "name": "Weighted by z",
+    "hit1": 0.658,
+    "hit3": 0.877,
+    "hit10": 0.932,
+    "mrr": 0.769
+   },
+   {
+    "name": "Weighted by CV",
+    "hit1": 0.658,
+    "hit3": 0.904,
+    "hit10": 0.959,
+    "mrr": 0.767
+   },
+   {
+    "name": "Weighted by z squared",
+    "hit1": 0.644,
+    "hit3": 0.877,
+    "hit10": 0.932,
+    "mrr": 0.765
+   }
+  ],
+  "flat_reranker_fallback": [
+   {
+    "name": "Always rerank (current)",
+    "hit1": 0.822,
+    "hit3": 0.973,
+    "mrr": 0.895,
+    "fallbacks": 0
+   },
+   {
+    "name": "Fused order if max rerank < 0.05",
+    "hit1": 0.836,
+    "hit3": 0.973,
+    "mrr": 0.902,
+    "fallbacks": 2
+   },
+   {
+    "name": "Fused order if max rerank < 0.10",
+    "hit1": 0.836,
+    "hit3": 0.973,
+    "mrr": 0.902,
+    "fallbacks": 2
+   },
+   {
+    "name": "Fused order if max rerank < 0.20",
+    "hit1": 0.822,
+    "hit3": 0.959,
+    "mrr": 0.891,
+    "fallbacks": 4
+   }
+  ]
+ },
+ "ablation_retrieval": {
+  "_about": "tests/eval_search.py --compare --mode retrieval, 109 questions, depth 10, run on CPU. Retrieval only: no reranker, no QA, no transliteration (so roman-*/mixed groups are not meaningful here), and D/E (dedupe/MMR, extra QA candidates) act after reranking so they show no change.",
+  "rows": [
+   {
+    "name": "All features off (baseline)",
+    "hit1": 0.48,
+    "hit3": 0.61,
+    "mrr": 0.561
+   },
+   {
+    "name": "All on (default)",
+    "hit1": 0.45,
+    "hit3": 0.64,
+    "mrr": 0.554
+   },
+   {
+    "name": "Score-sum fusion instead of RRF",
+    "hit1": 0.46,
+    "hit3": 0.65,
+    "mrr": 0.56
+   },
+   {
+    "name": "No language-analyzed BM25 fields",
+    "hit1": 0.43,
+    "hit3": 0.62,
+    "mrr": 0.539
+   },
+   {
+    "name": "Keep question words in BM25",
+    "hit1": 0.47,
+    "hit3": 0.65,
+    "mrr": 0.564
+   },
+   {
+    "name": "bn/hi keywords match all languages",
+    "hit1": 0.45,
+    "hit3": 0.64,
+    "mrr": 0.554
+   }
+  ]
+ },
+ "retrieval_vs_full": {
+  "_about": "hit@3 per group for retrieval only (default features, no reranker) vs the full pipeline (rerank + diversify + QA). Groups that need transliteration are left out of this comparison.",
+  "groups": [
+   "en",
+   "rare-en",
+   "bn",
+   "hi",
+   "bn->en",
+   "hi->en"
+  ],
+  "retrieval": [
+   1.0,
+   0.89,
+   0.92,
+   0.71,
+   0.5,
+   0.0
+  ],
+  "full": [
+   1.0,
+   1.0,
+   1.0,
+   1.0,
+   1.0,
+   0.5
+  ],
+  "overall_hit3": {
+   "retrieval": 0.64,
+   "full": 0.96
+  },
+  "overall_hit1": {
+   "retrieval": 0.45,
+   "full": 0.81
+  }
+ }
+}

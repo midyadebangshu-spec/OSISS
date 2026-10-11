@@ -17,6 +17,9 @@ if CURRENT_DIR not in sys.path:
 from search import search_and_extract
 
 
+# QA answers scoring below this are near-random spans; the UI should not highlight them as "the answer".
+ANSWER_MIN_SCORE = 0.02
+
 app = FastAPI(title="OSISS API", version="1.0.0")
 
 PROJECT_ROOT = os.path.abspath(os.path.join(CURRENT_DIR, ".."))
@@ -42,6 +45,7 @@ class SearchResultItem(BaseModel):
     page_number: int
     pdf_link: str
     paragraph_text: str
+    answer_text: Optional[str] = None
 
 
 class SearchResponse(BaseModel):
@@ -58,6 +62,8 @@ def map_result(item: Dict[str, Any]) -> SearchResultItem:
     normalized_file_path = file_path[2:] if file_path.startswith("./") else file_path
     pdf_link = f"/{normalized_file_path}" if normalized_file_path and not normalized_file_path.startswith("/") else normalized_file_path
 
+    answer_text = (item.get("qa_answer") or "").strip() if item.get("qa_score", 0.0) >= ANSWER_MIN_SCORE else ""
+
     return SearchResultItem(
         exact_quote=item.get("quote", ""),
         book_title=source.get("book_title") or "Unknown Title",
@@ -66,6 +72,7 @@ def map_result(item: Dict[str, Any]) -> SearchResultItem:
         page_number=int(source.get("page_number") or 0),
         pdf_link=pdf_link or "#",
         paragraph_text=item.get("matched_paragraph") or item.get("chunk_preview", ""),
+        answer_text=answer_text or None,
     )
 
 

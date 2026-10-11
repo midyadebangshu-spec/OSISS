@@ -1,6 +1,7 @@
 export type SearchResult = {
     exact_quote: string
     paragraph_text: string
+    answer_text?: string
     book_title: string
     author: string
     department?: string

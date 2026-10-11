@@ -214,8 +214,11 @@ def process_pdf(
         return False, f"Failed to process '{file_path}': {exc}"
 
 
-def run_ingestion_loop(once: bool) -> int:
-    """Run ingestion either once or continuously in watch mode."""
+def run_ingestion_loop(once: bool, only: Optional[List[str]] = None) -> int:
+    """Run ingestion either once or continuously in watch mode.
+
+    `only` restricts work to PDFs whose file name contains one of the given substrings.
+    """
     try:
         connection = get_postgres_connection()
         es_client = get_elasticsearch_client()
@@ -236,6 +239,8 @@ def run_ingestion_loop(once: bool) -> int:
 
             new_files: List[Tuple[str, str]] = []
             for path in list_pdf_files(settings.pdf_dir):
+                if only and not any(part.lower() in os.path.basename(path).lower() for part in only):
+                    continue
                 file_hash = compute_file_hash(path)
                 known = known_books.get(path)
                 if known is None:
@@ -281,13 +286,19 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Run a single scan of data/pdfs and exit.",
     )
+    parser.add_argument(
+        "--only",
+        nargs="+",
+        metavar="NAME",
+        help="Only handle PDFs whose file name contains one of these substrings.",
+    )
     return parser.parse_args()
 
 
 def main() -> int:
     """Program entrypoint."""
     args = parse_args()
-    return run_ingestion_loop(once=args.once)
+    return run_ingestion_loop(once=args.once, only=args.only)
 
 
 if __name__ == "__main__":

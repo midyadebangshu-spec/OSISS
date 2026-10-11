@@ -23,16 +23,23 @@ MODEL_SPECS = [
         "repo_id": "BAAI/bge-reranker-v2-m3",
         "local_dir": settings.reranker_model_path,
     },
+    {
+        # Romanized Bengali/Hindi -> native script (IndicXlit, CTranslate2 build, MIT).
+        "repo_id": "Singla0009/all-indic-transliteration",
+        "local_dir": os.path.dirname(settings.translit_model_path),
+        "allow_patterns": ["README.md", os.path.basename(settings.translit_model_path) + "/*"],
+    },
 ]
 
 
-def download_model(repo_id: str, local_dir: str) -> None:
+def download_model(repo_id: str, local_dir: str, allow_patterns=None) -> None:
     """Download a model snapshot into a deterministic local path."""
     os.makedirs(local_dir, exist_ok=True)
     snapshot_download(
         repo_id=repo_id,
         local_dir=local_dir,
         local_dir_use_symlinks=False,
+        allow_patterns=allow_patterns,
         resume_download=True,
     )
     print(f"[OSISS] Cached '{repo_id}' in '{local_dir}'.")
@@ -44,7 +51,7 @@ def main() -> int:
         os.makedirs(settings.models_dir, exist_ok=True)
 
         for spec in MODEL_SPECS:
-            download_model(spec["repo_id"], spec["local_dir"])
+            download_model(spec["repo_id"], spec["local_dir"], spec.get("allow_patterns"))
 
         print("[OSISS] All models downloaded and cached successfully.")
         return 0

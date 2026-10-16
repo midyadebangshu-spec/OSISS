@@ -298,3 +298,98 @@ def test_polling_switched_on_another_copy_reaches_the_worker(shared, override):
     finally:
         stop.set()
         worker.shutdown()
+
+
+# --- cache, lockout and heartbeat across copies -------------------------------------------------------------------
+
+
+def test_book_change_on_one_copy_retires_cached_answers_everywhere(shared):
+    import load_control
+
+    load_control._corpus_version = (0.0, 0)
+    key_before = load_control.SearchCache.key("what is light?", 3)
+    load_control.corpus_changed()  # e.g. an admin edited a title through another copy
+    load_control._corpus_version = (0.0, 0)  # that other copy's change is not cached here yet
+    key_after = load_control.SearchCache.key("what is light?", 3)
+    assert key_before != key_after
+    assert key_after == load_control.SearchCache.key("  What is LIGHT? ", 3)
+
+
+def test_admin_lockout_is_shared(shared):
+    import admin_api
+
+    copy_a, copy_b = admin_api.PostgresAuthFailures(), admin_api.PostgresAuthFailures()
+    for _ in range(admin_api.MAX_AUTH_FAILURES - 1):
+        copy_a.record("203.0.113.9")
+    assert copy_b.blocked_for("203.0.113.9") == 0
+    copy_b.record("203.0.113.9")
+    assert copy_a.blocked_for("203.0.113.9") > 0 and copy_b.blocked_for("203.0.113.9") > 0
+    assert copy_a.blocked_for("198.51.100.1") == 0
+    copy_a.clear("203.0.113.9")
+    assert copy_b.blocked_for("203.0.113.9") == 0
+
+
+def metrics_sample(searches, cache_hits, p50, p95, running=0, waiting=0):
+    return {"searches": searches, "searches_per_minute": searches / 5, "cache_hits": cache_hits,
+            "latency_p50": p50, "latency_p95": p95, "stage_seconds": {"rerank": p50 / 2, "qa": None},
+            "refused_rate_limit": 1, "refused_busy": 0, "running": running, "waiting": waiting, "concurrency": 2,
+            "cache_entries": 10}
+
+
+def test_heartbeats_list_copies_and_mark_stale_ones(shared, override):
+    import replica
+
+    override(replica_heartbeat_seconds=15)
+    replica.beat({"hostname": "a", "metrics": metrics_sample(10, 0, 1.0, 2.0)})
+    connection = _connect(TEST_DB)
+    with connection, connection.cursor() as cursor:
+        cursor.execute("INSERT INTO replicas (id, started_at, heartbeat_at, info) VALUES ('old-copy', %s, %s, '{}')",
+                       (time.time() - 3600, time.time() - 120))
+    connection.close()
+    copies = {item["id"]: item for item in replica.list_replicas()}
+    assert copies[replica.replica_id()]["alive"] and copies[replica.replica_id()]["this"]
+    assert copies["old-copy"]["alive"] is False
+
+
+def test_aggregate_over_live_copies():
+    import replica
+
+    copies = [
+        {"alive": True, "metrics": metrics_sample(30, 10, 1.0, 3.0, running=2, waiting=4)},
+        {"alive": True, "metrics": metrics_sample(10, 0, 2.0, 5.0, running=1)},
+        {"alive": False, "metrics": metrics_sample(1000, 0, 9.0, 9.0)},  # stale: ignored
+    ]
+    total = replica.aggregate(copies)
+    assert total["searches"] == 40 and total["cache_hits"] == 10 and total["cache_hit_rate"] == 0.25
+    assert total["latency_p50"] == pytest.approx((20 * 1.0 + 10 * 2.0) / 30)  # weighted by computed searches
+    assert total["latency_p95"] == 5.0 and (total["running"], total["waiting"], total["concurrency"]) == (3, 4, 4)
+    assert total["stage_seconds"]["rerank"] == pytest.approx((20 * 0.5 + 10 * 1.0) / 30)
+    assert total["stage_seconds"]["qa"] is None and total["refused_rate_limit"] == 2
+    assert replica.aggregate([]) == {}
+
+
+def test_metrics_endpoint_lists_every_copy(shared, override, monkeypatch):
+    from contextlib import asynccontextmanager
+
+    from fastapi.testclient import TestClient
+
+    import api_server
+    import replica
+
+    @asynccontextmanager
+    async def no_lifespan(_app):
+        yield
+
+    override(admin_token="t" * 40, admin_allowed_ips="")
+    monkeypatch.setattr(api_server.app.router, "lifespan_context", no_lifespan)
+    monkeypatch.setattr(replica, "readiness", lambda: {"ready": True, "checks": {}})
+    connection = _connect(TEST_DB)
+    with connection, connection.cursor() as cursor:
+        cursor.execute("INSERT INTO replicas (id, started_at, heartbeat_at, info) VALUES ('copy-2', %s, %s, %s)",
+                       (time.time(), time.time(), json.dumps({"metrics": metrics_sample(20, 5, 1.5, 4.0)})))
+    connection.close()
+    with TestClient(api_server.app) as client:
+        body = client.get("/api/admin/metrics", headers={"X-Admin-Token": "t" * 40}).json()
+    ids = {item["id"] for item in body["replicas"]}
+    assert ids == {"copy-2", replica.replica_id()} and body["replica_id"] == replica.replica_id()
+    assert body["searches"] >= 20 and body["latency_p95"] == 4.0

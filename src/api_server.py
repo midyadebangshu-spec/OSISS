@@ -23,6 +23,7 @@ if CURRENT_DIR not in sys.path:
 import admin
 import admin_api
 import load_control
+import replica
 import runtime_config
 from config import settings
 from db_pool import db
@@ -67,7 +68,7 @@ def start_admin_worker() -> None:
         connect=db_pool.connect,
         es_client=search.get_es_client,
         embedder=lambda: search.get_models()[0],
-        on_corpus_change=load_control.cache.invalidate,
+        on_corpus_change=load_control.corpus_changed,
     )
     # Every copy can queue and show jobs; only copies with INGEST_WORKER=true run them.
     worker.start(polling=bool(runtime_config.get_state("ingester_polling", False)), run_worker=settings.ingest_worker)
@@ -84,8 +85,13 @@ async def lifespan(_app: FastAPI):
         threading.Thread(target=ensure_schema, name="osiss-schema", daemon=True).start()
     for warning in runtime_config.load_overrides():
         print(f"[OSISS] {warning}")
+    for note in load_control.configure():
+        print(f"[OSISS] {note}")
+    admin_api.configure()
     runtime_config.start_sync(stop)
+    replica.start_warm_up()
     start_admin_worker()
+    replica.start_heartbeat(stop)
     yield
     stop.set()
     if admin_api.context.worker is not None:
@@ -272,6 +278,13 @@ def map_result(item: Dict[str, Any]) -> SearchResultItem:
         paragraph_text=item.get("matched_paragraph") or item.get("chunk_preview", ""),
         answer_text=answer_text or None,
     )
+
+
+@app.get("/ready")
+def ready():
+    """Load balancer health check: 200 when this copy can answer searches, else 503 (see replica.readiness)."""
+    state = replica.readiness()
+    return JSONResponse(state, status_code=200 if state["ready"] else 503)
 
 
 @app.get("/health")

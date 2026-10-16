@@ -340,3 +340,42 @@ def test_worker_reports_corpus_changes():
     finally:
         worker.shutdown()
     assert len(changes) == 2  # the scan that ingested books and the re-ingest
+
+
+# --- readiness ----------------------------------------------------------------------------------------------------
+
+
+def test_ready_reflects_checks(client, override, monkeypatch):
+    import replica
+
+    override(state_backend="local", warmup_on_start=False)
+    replica._ready_cache.update(at=0.0, value=None)
+    monkeypatch.setattr(replica, "_check_elasticsearch", lambda: False)
+    response = client.get("/ready")
+    assert response.status_code == 503 and response.json()["checks"] == {"elasticsearch": False}
+
+    replica._ready_cache.update(at=0.0, value=None)
+    monkeypatch.setattr(replica, "_check_elasticsearch", lambda: True)
+    override(warmup_on_start=True)  # then the models must be loaded too
+    replica._warm.clear()
+    assert client.get("/ready").status_code == 503
+    replica._ready_cache.update(at=0.0, value=None)
+    replica._warm.set()
+    monkeypatch.setattr(replica, "models_loaded", lambda: True)
+    body = client.get("/ready").json()
+    assert body["ready"] is True and body["checks"] == {"elasticsearch": True, "models": True}
+    replica._warm.clear()
+    replica._ready_cache.update(at=0.0, value=None)
+
+
+def test_ready_is_cached_briefly(monkeypatch, override):
+    import replica
+
+    override(state_backend="local", warmup_on_start=False)
+    calls = []
+    monkeypatch.setattr(replica, "_check_elasticsearch", lambda: calls.append(1) or True)
+    replica._ready_cache.update(at=0.0, value=None)
+    for _ in range(5):
+        replica.readiness()
+    assert len(calls) == 1
+    replica._ready_cache.update(at=0.0, value=None)

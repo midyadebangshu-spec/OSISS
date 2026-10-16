@@ -84,7 +84,52 @@ class AuthFailures:
             self._failures.pop(address, None)
 
 
+class PostgresAuthFailures:
+    """Wrong-token attempts shared by all API copies (STATE_BACKEND=postgres), so the lockout cannot be dodged by
+    landing on another copy. A database error lets the check pass: the token itself is still required."""
+
+    def _query(self, sql: str, params=(), fetch: bool = False):
+        with db() as connection:
+            with connection:
+                with connection.cursor() as cursor:
+                    cursor.execute(sql, params)
+                    return cursor.fetchall() if fetch else None
+
+    def blocked_for(self, address: str) -> float:
+        now = time.time()
+        try:
+            rows = self._query(
+                "SELECT at FROM admin_auth_failures WHERE address = %s AND at > %s ORDER BY at DESC LIMIT %s",
+                (address, now - AUTH_WINDOW_SECONDS, MAX_AUTH_FAILURES), fetch=True,
+            )
+        except Exception:  # pylint: disable=broad-except
+            return 0.0
+        if len(rows) < MAX_AUTH_FAILURES:
+            return 0.0
+        return rows[-1][0] + AUTH_WINDOW_SECONDS - now
+
+    def record(self, address: str) -> None:
+        now = time.time()
+        try:
+            self._query("INSERT INTO admin_auth_failures (address, at) VALUES (%s, %s)", (address, now))
+            self._query("DELETE FROM admin_auth_failures WHERE at < %s", (now - AUTH_WINDOW_SECONDS,))
+        except Exception as exc:  # pylint: disable=broad-except
+            print(f"[OSISS] Could not record a failed admin login: {exc}")
+
+    def clear(self, address: str) -> None:
+        try:
+            self._query("DELETE FROM admin_auth_failures WHERE address = %s", (address,))
+        except Exception:  # pylint: disable=broad-except
+            pass
+
+
 auth_failures = AuthFailures()
+
+
+def configure() -> None:
+    """Share the wrong-token lockout between copies when STATE_BACKEND=postgres (API startup)."""
+    global auth_failures  # pylint: disable=global-statement
+    auth_failures = PostgresAuthFailures() if settings.state_backend == "postgres" else AuthFailures()
 
 
 def allowed_networks() -> List[Any]:
@@ -226,6 +271,25 @@ def _disk_status() -> Dict[str, Any]:
     return {"path": os.path.abspath(path), "total": usage.total, "used": usage.used, "free": usage.free}
 
 
+def _deployment() -> Dict[str, Any]:
+    import replica  # pylint: disable=import-outside-toplevel
+    from storage import get_storage  # pylint: disable=import-outside-toplevel
+
+    try:
+        root = get_storage().root
+    except Exception as exc:  # pylint: disable=broad-except
+        root = f"unavailable: {exc}"
+    return {
+        "state_backend": settings.state_backend,
+        "storage_backend": settings.storage_backend,
+        "storage_root": root,
+        "redis": bool(settings.redis_url),
+        "ingest_worker": settings.ingest_worker,
+        "replica_id": replica.replica_id(),
+        "ready": replica.readiness(),
+    }
+
+
 @router.get("/status")
 def status() -> Dict[str, Any]:
     warnings = []
@@ -250,6 +314,7 @@ def status() -> Dict[str, Any]:
             "public_base_url": settings.public_base_url,
         },
         "admin_ip_restricted": bool(settings.admin_allowed_ips.strip()),
+        "deployment": _deployment(),
         "warnings": warnings,
     }
 
@@ -294,7 +359,7 @@ def update_book(book_id: int, patch: MetadataPatch) -> Dict[str, Any]:
             )
     except admin.AdminError as exc:
         _fail(exc)
-    load_control.cache.invalidate()  # cached answers carry the old title / author
+    load_control.corpus_changed()  # cached answers carry the old title / author
     return book
 
 
@@ -311,7 +376,7 @@ def delete_book(book_id: int) -> Dict[str, Any]:
         _fail(exc)
     except ingest.IngestBusy as exc:
         raise HTTPException(409, str(exc)) from exc
-    load_control.cache.invalidate()
+    load_control.corpus_changed()
     return {"deleted": book_id, "file_path": book["file_path"], "file_kept": True}
 
 
@@ -594,8 +659,22 @@ class ConsoleSearch(BaseModel):
 
 @router.get("/metrics")
 def search_metrics() -> Dict[str, Any]:
-    """Search load of the last five minutes (Dashboard "Search load" tile)."""
-    return load_control.metrics.snapshot(load_control.gate(), load_control.cache)
+    """Search load of the last five minutes (Dashboard "Search load" card).
+
+    With several copies (STATE_BACKEND=postgres) the top-level numbers are totals over the live copies and
+    `replicas` lists each copy; otherwise they are this process's own numbers.
+    """
+    import replica  # pylint: disable=import-outside-toplevel
+
+    here = load_control.metrics.snapshot(load_control.gate(), load_control.cache)
+    if settings.state_backend != "postgres":
+        return {**here, "replicas": [], "replica_id": replica.replica_id()}
+    try:
+        replica.beat()  # include this copy's latest numbers
+        replicas = replica.list_replicas()
+    except Exception as exc:  # pylint: disable=broad-except
+        return {**here, "replicas": [], "replica_id": replica.replica_id(), "replicas_error": str(exc)}
+    return {**here, **replica.aggregate(replicas), "replicas": replicas, "replica_id": replica.replica_id()}
 
 
 @router.post("/search")

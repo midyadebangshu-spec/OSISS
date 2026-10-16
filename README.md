@@ -223,6 +223,7 @@ Every step names the setting that controls it (see [section 12](#12-configuratio
 | `GET /health` | liveness check (`{status, version, admin_enabled}`) |
 | `POST /api/search` `{query, top_k}` | returns `{exact_quote, book_title, author, department, page_number, pdf_link, paragraph_text, answer_text}` per result |
 | `GET /data/pdfs/<file>.pdf` | PDFs from `PDF_DIR` only (opened by the page viewer at `#page=N`) |
+| `GET /ready` | load-balancer health check: 200 when this copy can answer searches, else 503 with the failing check |
 | `/api/admin/*` | admin API for the desktop admin app, behind `ADMIN_TOKEN` (see [section 11](#11-using-the-admin-app-step-by-step)) |
 
 `/api/search` and `/data` follow the search access mode chosen in the admin app: **open** (anyone who can reach the server) or
@@ -657,8 +658,8 @@ Pick the setup that matches how you will run OSISS, do the two common steps firs
 | [C. Public website](#115-setup-c-a-public-website-on-your-own-domain) | everyone on the internet | a server with a public IP and your domain (e.g. `ossis.com`) | an admin's PC anywhere |
 
 [11.6](#116-everyday-tasks) covers the day-to-day tasks, [11.7](#117-how-the-app-and-the-server-are-protected) how the app
-and the server are protected, and [11.8](#118-capacity-and-load) how many searches a server can take and how to protect it
-from overload.
+and the server are protected, [11.8](#118-capacity-and-load) how many searches a server can take and how to protect it
+from overload, and [11.9](#119-running-several-copies) how to run several copies (one machine, several machines, or AWS).
 
 > The screenshots come from a demo server with two sample PDFs and no Elasticsearch or models installed. That is why the
 > Dashboard shows Elasticsearch as down and the models as missing, and why the scores and timings in the search console screenshot are
@@ -837,8 +838,8 @@ Before going public, consider:
 * **Licences:** with open access, anyone can download every PDF. Make sure the books may be shared that way.
 * **Capacity:** one API process holds one copy of the models, and searches that arrive together share it. Measure how many searches
   your server answers before announcing the site, and set a per-IP rate limit for the public. Both are covered in
-  [11.8](#118-capacity-and-load). Serving heavy public traffic needs several API copies behind a load balancer, which is on the
-  [roadmap](#16-roadmap).
+  [11.8](#118-capacity-and-load). Serving heavy public traffic needs several API copies behind a load balancer
+  ([11.9](#119-running-several-copies)), or the AWS deployment in [deploy/aws](deploy/aws/README.md).
 * **Updates:** to update, run `git pull`, then `sudo systemctl restart osiss-api`, and rebuild the website if `frontend/` changed.
 
 ### 11.6 Everyday tasks
@@ -1071,8 +1072,78 @@ to everyone's wait.
 6. **Public site:** set *Searches per minute per IP* (e.g. 20) so one visitor or script cannot take every slot, and give apps
    their own limit per API key.
 
-When the load test shows that even the tuned server cannot keep up, the next step is several API copies behind a load balancer
-(roadmap item 6).
+When the load test shows that even the tuned server cannot keep up, run several API copies behind a load balancer
+([11.9](#119-running-several-copies)).
+
+### 11.9 Running several copies
+
+When the load test shows that one tuned server cannot keep up, or the site must stay up when one machine fails, run
+several copies of the API behind a load balancer. Each copy has its own models (one GPU each) and its own search
+queue. What they must agree on is shared:
+
+| Shared | Through | Set on every copy |
+|---|---|---|
+| Admin-app settings and server state, the job queue and log, the admin lockout, the list of copies, the "books changed" signal that retires cached answers | PostgreSQL | `STATE_BACKEND=postgres` |
+| The PDFs and staged uploads | one folder every copy mounts (NFS, EFS), or S3 | `STORAGE_BACKEND=local` with a shared `PDF_DIR` / `UPLOAD_DIR`, or `STORAGE_BACKEND=s3` + `S3_BUCKET` |
+| Answer cache and exact rate limits (optional) | Redis | `REDIS_URL` |
+
+Without Redis each copy keeps its own answer cache and counts rate limits on its own, so set the per-IP limit to the
+total you want divided by the number of copies.
+
+**One copy runs ingestion.** `INGEST_WORKER=true` on exactly one copy (the worker) and `false` on the search copies.
+Any copy accepts uploads and shows jobs; the worker runs them, so OCR never slows down a search copy. Each job runs
+once even if two workers are started by mistake.
+
+**Every copy also needs** the same `ADMIN_TOKEN`, PostgreSQL and Elasticsearch, a unique `REPLICA_ID` (the name the
+admin app shows), `WARMUP_ON_START=true` (load the models before taking traffic), and `FORWARDED_ALLOW_IPS` set to the
+load balancer's address, so rate limits and the admin lockout see the visitors' addresses. The load balancer sends
+traffic only to copies whose `GET /ready` answers 200.
+
+**Option 1: one machine with several GPUs.** `deploy/docker-compose.replicas.yml` runs a worker and two search copies
+(one GPU each) with PostgreSQL, Elasticsearch, optional Redis and Caddy in front:
+
+```bash
+cp deploy/replicas.env.example deploy/replicas.env          # set ADMIN_TOKEN, POSTGRES_PASSWORD, OSISS_SITE, ...
+docker compose -f deploy/docker-compose.replicas.yml --env-file deploy/replicas.env up -d --build
+docker compose -f deploy/docker-compose.replicas.yml --env-file deploy/replicas.env --profile redis up -d   # with Redis
+```
+
+The models come from `../models` (mounted read-only) or `MODELS_S3_URI`. Add a copy by duplicating a `search-N` block
+and listing it in `deploy/Caddyfile.replicas`.
+
+**Option 2: several machines on the campus network.** On each machine run `./api.sh` with a `.env` holding the shared
+settings above, mount the same PDF folder (or use S3), and put Caddy in front with `deploy/Caddyfile.replicas`
+(replace `search-1:8000 ...` with the machines' addresses). Each machine can use `deploy/osiss-api.service`.
+
+**Option 3: AWS.** `deploy/aws/` creates the whole setup with Terraform: GPU copies that scale with demand, a worker,
+RDS PostgreSQL, S3, Elasticsearch on EC2 or Elastic Cloud, optional Redis and WAF. Follow
+[deploy/aws/README.md](deploy/aws/README.md), which also covers costs and removal.
+
+**Watching the copies.** The Dashboard's Search load card shows the totals and one row per copy. A copy that stops
+reporting is flagged, and the load balancer stops using it once its `/ready` check fails:
+
+<img src="docs/images/admin/replicas-load.png" width="720" alt="Search load across copies">
+
+The Server card names the shared state, the PDF storage, Redis and the copy that answered; jobs show which copy ran them:
+
+<img src="docs/images/admin/replicas-server.png" width="720" alt="Deployment facts">
+
+<img src="docs/images/admin/replicas-jobs.png" width="720" alt="Jobs run by the worker">
+
+**What was tested.** The live test used 3 search copies plus a worker behind Caddy, PostgreSQL, Redis and an
+S3-compatible store. Each search took a simulated 1 s; Elasticsearch and the models were stand-ins. The results:
+
+* A setting saved through the load balancer reached all copies within 3 s.
+* A scan and an upload queued on search copies ran once, on the worker. The uploaded PDF was served by a third copy
+  through a signed S3 link.
+* A title edit made through one copy retired the cached answer on the others.
+* A rate limit of 6 per minute held exactly across all copies.
+* Throughput rose from 2.0 to 6.0 searches/s (typical wait from 6.0 s to 2.0 s) going from one copy to three.
+* Stopping a copy during a load test cost one request (the one it was answering). The copy was flagged in the admin
+  app, and rejoined automatically after a restart.
+
+**Limits.** `ingestion.sh` running as a separate process does not signal book changes to the copies' caches. Cached
+answers then age out after *Answer cache time* instead of at once. Prefer the worker copy for ingestion.
 
 ---
 
@@ -1171,6 +1242,30 @@ All settings are environment variables, read at import time into the frozen `Set
 
 See [11.8](#118-capacity-and-load) for how to measure and tune these.
 
+### Several copies, storage and managed services
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `STATE_BACKEND` | `local` | `postgres` shares settings, jobs, log, lockouts and the copies list between API copies ([11.9](#119-running-several-copies)) |
+| `SETTINGS_SYNC_SECONDS` | `5` | How often a copy picks up settings saved through another copy |
+| `INGEST_WORKER` | `true` | Whether this process runs ingestion jobs and polling (`false` on search-only copies) |
+| `REPLICA_ID` | host name + process id | Name of this copy in the admin app |
+| `REPLICA_HEARTBEAT_SECONDS` | `15` | How often a copy reports; three missed reports mark it as not reporting |
+| `WARMUP_ON_START` | `false` | Load the models at start; `/ready` then answers 200 only once they are loaded |
+| `REDIS_URL` | *(empty)* | e.g. `redis://host:6379/0`: answer cache and exact rate limits shared by all copies |
+| `STORAGE_BACKEND` | `local` | `s3` keeps PDFs and staged uploads in S3 |
+| `S3_BUCKET`, `S3_PREFIX`, `S3_UPLOAD_PREFIX` | *(empty)*, `pdfs/`, `uploads/` | Where in S3 |
+| `S3_REGION`, `S3_ENDPOINT_URL` | *(empty)* | Region; endpoint for S3-compatible stores (MinIO, ...) |
+| `PDF_SERVE_MODE` | `redirect` | S3 PDFs: `redirect` to a short-lived signed URL, or `proxy` through the API |
+| `S3_URL_EXPIRY_SECONDS` | `900` | Lifetime of those signed URLs |
+| `POSTGRES_SSLMODE`, `POSTGRES_SSLROOTCERT` | *(empty)* | TLS to a managed database, e.g. `require` for RDS |
+| `ELASTICSEARCH_API_KEY` | *(empty)* | Secured cluster (Elastic Cloud); or `ELASTICSEARCH_USERNAME` + `ELASTICSEARCH_PASSWORD` |
+| `ELASTICSEARCH_CA_CERTS`, `ELASTICSEARCH_VERIFY_CERTS` | *(empty)*, `true` | TLS to Elasticsearch |
+
+The container image (`Dockerfile`, `deploy/docker-entrypoint.sh`) also reads `MODELS_S3_URI` (fetch `models/` from S3
+at start; see `src/sync_models.py`), `DOWNLOAD_MODELS=true`, `RUN_DB_INIT=true` (create the schema and index; set it on
+one container) and `FORWARDED_ALLOW_IPS` (the load balancer's address, whose `X-Forwarded-For` is trusted).
+
 Settings marked as runtime-editable in the admin app (search knobs, `RERANK_BATCH_SIZE`, the load-protection limits,
 `POLLING_INTERVAL_SECONDS`, `SEARCH_ACCESS`, `CORS_ORIGINS`, `PUBLIC_BASE_URL`) can be overridden from `settings_overrides.json`,
 which wins over the environment. `MODEL_PRECISION` and `SEARCH_CONCURRENCY` need a restart.
@@ -1187,7 +1282,11 @@ src/
   ingest_worker.py         in-process ingestion worker: jobs, polling, maintenance scripts, log
   runtime_config.py        settings the admin app may change at runtime, persisted overrides
   db_pool.py               PostgreSQL connection pool for the API
-  load_control.py          answer cache, rate limiter, search queue and load metrics
+  load_control.py          answer cache, rate limiter, search queue and load metrics (Redis-backed when REDIS_URL is set)
+  job_store.py             ingestion job queue and log: in memory, or shared in PostgreSQL
+  storage.py               where PDFs live: local folder or S3 (staging, signed links, local copies for OCR)
+  replica.py               this copy among several: name, heartbeat with metrics, /ready, model warm-up
+  sync_models.py           copies models/ to or from S3
   search.py                search pipeline: retrieve, fuse, rerank, diversify, QA, quote extraction
   ranking.py               model-free helpers: query cleanup, RRF, MMR, dedupe, QA windows
   translit.py              romanized-query detection and IndicXlit transliteration
@@ -1223,9 +1322,13 @@ docs/
 data/pdfs/                 source PDFs (git-ignored)
 models/                    local model cache (git-ignored)
 docker-compose.yml         Postgres + Elasticsearch (published on 127.0.0.1 only)
+Dockerfile                 API image (website built in, Tesseract with ben/hin, /ready health check)
 deploy/
   Caddyfile.example        HTTPS reverse proxy for a public domain, admin API limited to the admin's IP
   osiss-api.service        systemd unit: start the API at boot, restart it if it stops
+  docker-entrypoint.sh     container start: fetch models, optional schema init, run the API
+  docker-compose.replicas.yml, Caddyfile.replicas, replicas.env.example   several copies on one machine
+  aws/                     Terraform for AWS (guide: deploy/aws/README.md; terraform test with a mocked provider)
 setup.sh, ingestion.sh, api.sh   bootstrap and runner wrappers
 ```
 
@@ -1235,8 +1338,13 @@ setup.sh, ingestion.sh, api.sh   bootstrap and runner wrappers
 
 ```bash
 # unit tests (no services needed). The env var avoids system ROS pytest plugins that crash collection.
-# tests/test_admin_db.py uses a throwaway `osiss_test` database and is skipped when PostgreSQL is not reachable.
+# test_admin_db.py, test_replicas_db.py and the ingestion part of test_storage_s3.py use a throwaway `osiss_test`
+# database and are skipped when PostgreSQL is not reachable; test_storage_s3.py fakes S3 with moto and test_redis.py
+# starts a local redis-server (skipped if not installed): pip install moto fakeredis
 PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 .venv/bin/python -m pytest tests
+
+# AWS configuration: validated and planned against a mocked AWS provider (no account needed)
+cd deploy/aws && terraform init -backend=false && terraform test
 
 # admin app: vault, profile rules and local process control (Node 22), then lint, typecheck and build
 cd admin && npm test && npm run lint && npm run build
@@ -1273,6 +1381,9 @@ Running the evaluation while the API server is up can run out of GPU memory on a
 * **Admin app says "Admin API is disabled":** set `ADMIN_TOKEN` in `.env` and restart `./api.sh`.
 * **Admin app gets 429:** too many wrong admin tokens from that address; wait 15 minutes or fix the token under *Servers*.
 * **Behind a reverse proxy, `ADMIN_ALLOWED_IPS` sees the proxy's address:** uvicorn only trusts `X-Forwarded-For` from `127.0.0.1` by default (`FORWARDED_ALLOW_IPS`).
+* **Several copies: a setting changed on one copy does not show on another:** all copies need `STATE_BACKEND=postgres` and the same database; changes arrive within `SETTINGS_SYNC_SECONDS`.
+* **Several copies: uploads stay "queued":** no copy runs with `INGEST_WORKER=true`, or it cannot reach the shared PDF storage (check its log in the admin app's live log).
+* **The load balancer sends no traffic to a copy:** `curl http://<copy>:8000/ready` shows which check fails (Elasticsearch, database, or models still loading with `WARMUP_ON_START=true`).
 
 ---
 
@@ -1284,8 +1395,9 @@ Running the evaluation while the API server is up can run out of GPU memory on a
 3. **Cross-language retrieval:** the language-mismatch BM25 rule and a reranker blend ([8.6](#86-experiment-soft-bm25-weight-for-cross-language-questions)), validated on a larger cross-language set.
 4. **Quote quality:** better sentence splitting around section numbers and a fallback when the QA span is a fragment.
 5. **More books and OCR quality checks** for Bengali/Hindi conjuncts.
-6. **Scaling out for heavy public traffic:** run several API copies behind a load balancer (models loaded once per copy, GPU
-   sharing, background ingestion moved to one copy) and a managed or replicated Elasticsearch/PostgreSQL.
+6. ~~**Scaling out for heavy public traffic**~~ — done: several API copies sharing state through PostgreSQL, S3 storage,
+   optional Redis, and an AWS deployment ([11.9](#119-running-several-copies)). Next: apply the AWS configuration to a real
+   account and measure real GPU throughput.
 
 ---
 

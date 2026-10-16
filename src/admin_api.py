@@ -22,6 +22,7 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
 import admin
+import load_control
 import runtime_config
 from config import settings
 from db_pool import db
@@ -285,11 +286,13 @@ def get_book(book_id: int) -> Dict[str, Any]:
 def update_book(book_id: int, patch: MetadataPatch) -> Dict[str, Any]:
     try:
         with db() as connection:
-            return admin.update_book_metadata(
+            book = admin.update_book_metadata(
                 connection, context.es_client(), book_id, patch.model_dump(exclude_unset=True)
             )
     except admin.AdminError as exc:
         _fail(exc)
+    load_control.cache.invalidate()  # cached answers carry the old title / author
+    return book
 
 
 @router.delete("/books/{book_id}")
@@ -305,6 +308,7 @@ def delete_book(book_id: int) -> Dict[str, Any]:
         _fail(exc)
     except ingest.IngestBusy as exc:
         raise HTTPException(409, str(exc)) from exc
+    load_control.cache.invalidate()
     return {"deleted": book_id, "file_path": book["file_path"], "file_kept": True}
 
 
@@ -571,13 +575,28 @@ class ConsoleSearch(BaseModel):
     top_k: int = Field(default=3, ge=1, le=10)
 
 
+@router.get("/metrics")
+def search_metrics() -> Dict[str, Any]:
+    """Search load of the last five minutes (Dashboard "Search load" tile)."""
+    return load_control.metrics.snapshot(load_control.gate(), load_control.cache)
+
+
 @router.post("/search")
-def console_search(payload: ConsoleSearch) -> Dict[str, Any]:
-    """The full search pipeline with scores and per-stage timings, for testing from the admin app."""
+async def console_search(payload: ConsoleSearch) -> Dict[str, Any]:
+    """The full search pipeline with scores and per-stage timings, for testing from the admin app.
+
+    Never cached (it is for testing), but it waits in the same queue as public searches.
+    """
+    from starlette.concurrency import run_in_threadpool  # pylint: disable=import-outside-toplevel
+
     timings: Dict[str, float] = {}
     started = time.perf_counter()
     try:
-        result = context.search(payload.query, payload.top_k, timings)
+        result = await load_control.gate().run(
+            lambda: run_in_threadpool(context.search, payload.query, payload.top_k, timings)
+        )
+    except load_control.Busy as exc:
+        raise HTTPException(503, str(exc), headers={"Retry-After": str(exc.retry_after)}) from exc
     except Exception as exc:  # pylint: disable=broad-except
         raise HTTPException(500, f"Search execution failed: {exc}") from exc
     total = time.perf_counter() - started

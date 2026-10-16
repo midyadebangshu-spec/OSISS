@@ -92,8 +92,11 @@ class IngestWorker:
         es_client: Callable[[], Any],
         embedder: Callable[[], Any],
         log_size: int = 2000,
+        on_corpus_change: Optional[Callable[[], None]] = None,
     ):
         self._connect, self._es_client, self._embedder = connect, es_client, embedder
+        # Called after a job that may have added, changed or removed books (e.g. to clear the answer cache).
+        self._on_corpus_change = on_corpus_change
         self._connection = None
         self._lock = threading.Lock()
         self._wake = threading.Event()
@@ -249,6 +252,9 @@ class IngestWorker:
         finally:
             job.finished_at = time.time()
             self._cleanup(job)
+            # A failed re-ingest may already have removed the book, so non-scan jobs count as changes either way.
+            if self._on_corpus_change and (job.kind != "scan" or job.params.get("ingested")):
+                self._on_corpus_change()
 
     @staticmethod
     def _cleanup(job: Job) -> None:
@@ -262,6 +268,7 @@ class IngestWorker:
         import ingest  # pylint: disable=import-outside-toplevel
 
         count = ingest.scan_once(self._db(), self._es_client(), self._embedder(), log=self.log)
+        job.params["ingested"] = count
         self.last_scan_at = time.time()
         return f"{count} book(s) ingested."
 

@@ -55,8 +55,14 @@ def resolve_runtime_devices() -> tuple[str, int]:
     return "cpu", -1
 
 
+def use_half_precision(device: str) -> bool:
+    """MODEL_PRECISION fp16 / auto on a GPU; the CPU always runs fp32 (fp16 is slow or unsupported there)."""
+    return device.startswith("cuda") and settings.model_precision in {"fp16", "auto"}
+
+
 def build_qa_runner(qa_device: int) -> Callable[[str, str], Dict]:
     """Build an extractive QA runner compatible with different Transformers versions."""
+    half = use_half_precision("cuda" if qa_device == 0 else "cpu")
     try:
         qa_pipeline = pipeline(
             "question-answering",
@@ -64,6 +70,7 @@ def build_qa_runner(qa_device: int) -> Callable[[str, str], Dict]:
             tokenizer=settings.qa_model_path,
             device=qa_device,
             local_files_only=True,
+            **({"torch_dtype": torch.float16} if half else {}),
         )
 
         def run_with_pipeline(question: str, context: str) -> Dict:
@@ -87,6 +94,8 @@ def build_qa_runner(qa_device: int) -> Callable[[str, str], Dict]:
 
     model = AutoModelForQuestionAnswering.from_pretrained(settings.qa_model_path, local_files_only=True)
     model.to(device)
+    if half:
+        model.half()
     model.eval()
     return make_windowed_qa_runner(tokenizer, model, device)
 
@@ -392,6 +401,8 @@ def get_models() -> Tuple[SentenceTransformer, Callable[[str, str], Dict]]:
     embedder_device, qa_device = resolve_runtime_devices()
     print(f"[OSISS] Retriever device: {embedder_device} | QA device: {'cuda:0' if qa_device == 0 else 'cpu'}")
     embedder = SentenceTransformer(settings.bge_model_path, device=embedder_device, local_files_only=True)
+    if use_half_precision(embedder_device):
+        embedder.half()
     return embedder, build_qa_runner(qa_device)
 
 
@@ -413,7 +424,10 @@ def get_reranker() -> Optional[CrossEncoder]:
         print(f"[OSISS] Reranker not found at '{settings.reranker_model_path}'; skipping reranking.")
         return None
     device, _ = resolve_runtime_devices()
-    return CrossEncoder(settings.reranker_model_path, device=device, local_files_only=True)
+    reranker = CrossEncoder(settings.reranker_model_path, device=device, local_files_only=True)
+    if use_half_precision(device):
+        reranker.half()
+    return reranker
 
 
 def rerank_candidates(
@@ -430,7 +444,7 @@ def rerank_candidates(
     pairs = [
         (query_for_candidate(item, query, variant_queries), item["source"].get("text", "")) for item in candidates
     ]
-    scores = reranker.predict(pairs, batch_size=8, show_progress_bar=False)
+    scores = reranker.predict(pairs, batch_size=max(1, settings.rerank_batch_size), show_progress_bar=False)
     for item, (scored_query, _), score in zip(candidates, pairs, scores):
         item["rerank_score"] = float(score)
         item["scored_query"] = scored_query

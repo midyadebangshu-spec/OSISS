@@ -53,7 +53,20 @@ FIELDS: Dict[str, Field] = {
         "float", "search", "Romanized fallback threshold", "Below this top rerank score, rewrites are tried.", 0.0, 1.0
     ),
     "translit_original_weight": Field("float", "search", "Weight of the typed romanized query", "", 0.0, 2.0),
+    "rerank_batch_size": Field("int", "search", "Rerank batch size", "Pairs per reranker pass; larger is faster on a GPU.", 1, 256),
     "polling_interval_seconds": Field("int", "ingestion", "Poll interval (seconds)", "", 2, 3600),
+    "search_cache_size": Field("int", "load", "Answer cache size", "Recent answers kept in memory; 0 = off.", 0, 100000),
+    "search_cache_ttl_seconds": Field(
+        "int", "load", "Answer cache time (seconds)", "Longest an answer is reused; book changes clear it at once.", 0, 86400
+    ),
+    "search_queue_limit": Field(
+        "int", "load", "Search queue limit", "Searches allowed to wait; more get 503 'busy, retry'.", 0, 10000
+    ),
+    "search_queue_timeout_seconds": Field("int", "load", "Queue wait limit (seconds)", "", 1, 600),
+    "search_rate_limit_per_minute": Field(
+        "int", "load", "Searches per minute per IP", "0 = no limit. Mind campus networks sharing one address.", 0, 100000
+    ),
+    "api_key_rate_limit_per_minute": Field("int", "load", "Searches per minute per API key", "0 = no limit.", 0, 100000),
     "search_access": Field(
         "choice", "access", "Search access",
         "open: anyone who can reach the server; key: apps need an API key (allowed origins excepted).",
@@ -68,7 +81,7 @@ RESTART_FIELDS = (
     "postgres_host", "postgres_port", "postgres_db", "elasticsearch_url", "elasticsearch_index",
     "bge_model_path", "qa_model_path", "reranker_model_path", "translit_model_path", "pdf_dir", "upload_dir",
     "upload_max_mb", "chunk_size_words", "chunk_overlap_words", "min_chunk_words", "ocr_fallback", "ocr_languages",
-    "embedding_dim", "inference_device", "admin_allowed_ips", "serve_frontend",
+    "embedding_dim", "inference_device", "model_precision", "search_concurrency", "admin_allowed_ips", "serve_frontend",
 )
 
 _lock = threading.Lock()

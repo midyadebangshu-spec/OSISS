@@ -292,7 +292,7 @@ def test_upload_rejects_duplicate(client, override, tmp_path, monkeypatch):
 
 @pytest.fixture
 def fake_search(monkeypatch):
-    monkeypatch.setattr(api_server, "search_and_extract", lambda query, top_k: {"query": query, "results": []})
+    monkeypatch.setattr(api_server, "search_and_extract", lambda query, top_k, **_: {"query": query, "results": []})
 
 
 def test_open_mode_needs_no_key(client, fake_search):

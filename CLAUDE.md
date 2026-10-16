@@ -58,4 +58,10 @@ Changing the ES mapping or embedding dim generally requires recreating the index
 
 Needs Postgres/ES running and the PDFs in `data/pdfs/` ingested (PDFs, `models/`, `.venv` are gitignored). Several corpus books legitimately answer the same question, so when a "miss" looks correct, widen the label rather than tuning the system. The bn/hi questions were written from the ingested OCR text (definition-style, so easy: a ceiling, not real-world accuracy); the `->en` cross-language groups have only 2 questions each. Treat one- or two-question differences as noise. Two corpus books are scanned (OCR-only) and noisy.
 
+## Admin API and admin app
+
+`src/admin_api.py` serves `/api/admin/*` (needs `ADMIN_TOKEN`, sent as `X-Admin-Token`; 503 when unset). Model-free DB/ES helpers are in `src/admin.py`; metadata edits must update PostgreSQL *and* the book's ES docs (search reads title/author/department from ES). Deleting a book keeps the PDF and records it in `excluded_files`, which `ingest.scan_once` skips. Every path that adds/re-ingests/deletes a book holds `ingest.ingest_lock` (a PG advisory lock), including `ingestion.sh`. `src/ingest_worker.py` runs jobs inside the API process with the API's embedder. `src/runtime_config.py` holds the allowlist of settings changeable at runtime (persisted to `data/admin/settings_overrides.json`); add a field there to expose a new knob. `/data` only serves PDFs under `PDF_DIR`, so other files under `data/` stay private.
+
+`admin/` is the Electron app (own `package.json`): `npm run dev`, `npm test` (node:test on `electron/*.test.ts`), `npm run lint`, `npm run build`, `npm run dist`. The renderer has no Node access and never sees tokens; all server calls go through `electron/main.ts` (only `/health` and `/api/admin/*`). The vault (`electron/vault.ts`) has no Electron imports so it is testable in plain Node.
+
 `.mcp.json` (code-review-graph, local paths) and `.code-review-graph/` are gitignored.

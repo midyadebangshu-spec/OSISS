@@ -13,6 +13,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
+from starlette.concurrency import run_in_threadpool
 
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
 if CURRENT_DIR not in sys.path:
@@ -156,7 +157,8 @@ async def public_access(request: Request, call_next):
     headers = cors_headers(request)
     if request.method == "OPTIONS" and request.headers.get("access-control-request-method"):
         return Response(status_code=204 if headers else 403, headers=headers)
-    denied = None if path == "/health" else check_search_access(request)
+    # The API-key check queries PostgreSQL; keep that off the event loop.
+    denied = None if path == "/health" else await run_in_threadpool(check_search_access, request)
     response = denied or await call_next(request)
     response.headers.update(headers)
     return response

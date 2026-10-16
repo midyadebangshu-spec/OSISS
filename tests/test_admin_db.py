@@ -269,3 +269,18 @@ def test_restore_and_reingest_jobs_keep_metadata(connection, pipeline):
     restored = admin.get_book(connection, job.book_id)
     assert (restored["title"], restored["author"]) == ("Biology", "Campbell")
     assert admin.list_excluded(connection) == []
+
+
+def test_lock_timeout_raises_busy(connection, test_database):
+    other = _connect(TEST_DB)
+    try:
+        with ingest.ingest_lock(other):
+            started = time.time()
+            with pytest.raises(ingest.IngestBusy):
+                with ingest.ingest_lock(connection, timeout=0.5):
+                    pass
+            assert 0.4 < time.time() - started < 3
+        with ingest.ingest_lock(connection, timeout=0.5):
+            pass
+    finally:
+        other.close()

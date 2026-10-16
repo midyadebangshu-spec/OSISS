@@ -219,9 +219,14 @@ Every step names the setting that controls it (see [section 11](#11-configuratio
 
 | Endpoint | |
 |---|---|
-| `GET /health` | liveness check |
+| `GET /health` | liveness check (`{status, version, admin_enabled}`) |
 | `POST /api/search` `{query, top_k}` | returns `{exact_quote, book_title, author, department, page_number, pdf_link, paragraph_text, answer_text}` per result |
-| `GET /data/pdfs/<file>.pdf` | static PDFs (opened by the page viewer at `#page=N`) |
+| `GET /data/pdfs/<file>.pdf` | PDFs from `PDF_DIR` only (opened by the page viewer at `#page=N`) |
+| `/api/admin/*` | admin API for the desktop admin app, behind `ADMIN_TOKEN` (see [Admin app](#admin-app)) |
+
+`/api/search` and `/data` follow the search access mode chosen in the admin app: **open** (anyone who can reach the server) or
+**key** (an `X-API-Key` header, or `?key=` on PDF links, is required except for pages served by this server or from an allowed
+origin). See [Serving on a domain or to apps](#serving-on-a-domain-or-to-apps).
 
 ---
 
@@ -611,9 +616,71 @@ sudo apt install tesseract-ocr tesseract-ocr-eng tesseract-ocr-ben tesseract-ocr
 
 Always use the `.venv` interpreter or the wrapper scripts; the files in `src/` use flat imports (`from config import settings`), so run them as files, not as `python -m src.x` (uvicorn is the exception).
 
+### Admin app
+
+`admin/` is an Electron desktop app that controls an OSISS server, on this computer or anywhere else:
+
+* **Dashboard:** health of PostgreSQL, Elasticsearch, models, GPU and disk; ingester state. For a server on the same computer it
+  also starts and stops the Docker services and the API (`api.sh`, run detached so it keeps running after the app closes).
+* **Books:** fix titles, authors, years and departments (written to PostgreSQL *and* every Elasticsearch document of the book, so
+  search shows them at once, no re-embedding); upload a PDF with its metadata; re-ingest; delete. Deleting keeps the PDF on disk
+  and lists it under *Deleted*, where it can be restored with its old metadata; the ingester never re-adds a deleted file by itself.
+  Books whose title is still the file-name guess are flagged.
+* **Ingestion & jobs:** the ingester runs inside the API process and reuses its loaded embedder (no second copy on the GPU).
+  Turn folder polling on or off (same work as `./ingestion.sh`, kept across restarts), scan now, run `db_init` / `reindex_es` /
+  `backfill_exercise_flags` as jobs, and follow a live log. Jobs run one at a time.
+* **Search console:** the full pipeline with rerank / QA / retrieval scores and time per stage.
+* **Search settings:** change the search knobs (rerank, QA weight, MMR, candidates, transliteration, ...) without a restart; saved
+  values go to `data/admin/settings_overrides.json` and override the environment. Restart-only settings are shown read-only.
+* **Access & API keys:** choose the search access mode, allowed website origins, the public URL, and create / disable / delete API
+  keys for apps (only a SHA-256 of each key is stored).
+
+```bash
+./setup.sh                  # also writes a random ADMIN_TOKEN to .env (api.sh and ingestion.sh load .env)
+./api.sh
+cd admin && npm install && npm run dev       # development
+cd admin && npm run dist                     # Linux AppImage + .deb in admin/release/ (dist:win, dist:mac for others)
+```
+
+On first launch the app creates a random **6-character passkey** (no look-alike characters) that is shown once and then needed every
+time the app opens; it can be changed to a longer passphrase under *App security*. Saved servers and their admin tokens are
+encrypted with AES-256-GCM under a scrypt key derived from the passkey and, where the OS keychain is available, sealed with it too.
+After 5 wrong passkeys the app locks for 30 s, doubling each time up to 15 minutes, and it locks itself after 15 idle minutes.
+Forgetting the passkey means *Reset app*, which only clears the saved servers on that computer.
+
+The passkey protects the app on that computer; the **server** is protected by `ADMIN_TOKEN`. Every `/api/admin/*` call needs the
+`X-Admin-Token` header: without `ADMIN_TOKEN` the admin API answers 503, 10 wrong tokens from one address within 15 minutes block it
+for 15 minutes, and `ADMIN_ALLOWED_IPS` can limit admin calls to some addresses. The app sends tokens from its main process only
+(the UI never sees them) and refuses plain `http://` to a remote server unless the profile is explicitly marked as a trusted-LAN
+server.
+
+### Serving on a domain or to apps
+
+The same server can serve people through a website and other apps through the API:
+
+* **Website on a domain:** `cd frontend && npm run build`, set `SERVE_FRONTEND=true` so the API serves `frontend/dist` at `/`, and put
+  an HTTPS reverse proxy in front of port 8000. With Caddy, the whole config is:
+
+  ```
+  search.college.edu {
+      reverse_proxy 127.0.0.1:8000
+  }
+  ```
+
+  Set the domain as the public URL in the admin app. If the website is hosted elsewhere, add its origin to the allowed origins
+  (CORS).
+* **Apps:** create an API key per app in the admin app. Apps call `POST /api/search` with `X-API-Key`; with a public URL set,
+  `pdf_link` in the results is absolute.
+* **Access mode:** **open** lets anyone who can reach the server search and open PDFs (keys are optional and only count usage);
+  **key** requires a key, except for the server's own pages and allowed origins. That exemption relies on the `Origin`,
+  `Referer` and `Sec-Fetch-Site` headers, which browsers set honestly but scripts can forge: it keeps other websites out, but it is
+  not a lock against a determined user while the public website is up (that would need user logins). Until an admin chooses, the
+  server behaves as open.
+
 ### Upgrading an existing install
 
-* Run `db_init.py` to add new columns and the Elasticsearch subfields, then `reindex_es.py` once to fill the `text.bn|hi|en` fields (in place, no re-embedding).
+* Run `db_init.py` to add new columns and the Elasticsearch subfields, then `reindex_es.py` once to fill the `text.bn|hi|en` fields (in place, no re-embedding). The API also creates the admin tables (`excluded_files`, `api_clients`) at startup.
+* Add `ADMIN_TOKEN=<long random value>` to `.env` (or rerun `./setup.sh`) to enable the admin app.
 * Changing the Elasticsearch mapping or the embedding dimension generally means recreating the index and re-ingesting; chunk-boundary changes only affect books that are re-ingested.
 
 ---
@@ -682,13 +749,35 @@ All settings are environment variables, read at import time into the frozen `Set
 | `EMBEDDING_DIM` | `1024` |
 | `INFERENCE_DEVICE` | `auto` (`auto`, `cpu` or `cuda`) |
 
+### Admin and access
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `ADMIN_TOKEN` | *(empty)* | Enables `/api/admin/*` and the in-process ingester; `setup.sh` generates one into `.env` |
+| `ADMIN_ALLOWED_IPS` | *(empty = any)* | Comma-separated IPs / CIDRs allowed to call the admin API |
+| `UPLOAD_DIR` | `./data/uploads` | Staging folder for uploaded PDFs |
+| `UPLOAD_MAX_MB` | `500` | Largest accepted upload |
+| `SETTINGS_OVERRIDES_PATH` | `./data/admin/settings_overrides.json` | Settings saved from the admin app |
+| `SEARCH_ACCESS` | *(empty = open, not chosen)* | `open` or `key`; normally chosen in the admin app |
+| `CORS_ORIGINS` | *(empty)* | Comma-separated website origins allowed to call the API |
+| `PUBLIC_BASE_URL` | *(empty)* | Makes `pdf_link` absolute, e.g. `https://search.college.edu` |
+| `SERVE_FRONTEND` | `false` | Serve `frontend/dist` at `/` |
+
+Settings marked as runtime-editable in the admin app (search knobs, `POLLING_INTERVAL_SECONDS`, `SEARCH_ACCESS`, `CORS_ORIGINS`,
+`PUBLIC_BASE_URL`) can be overridden from `settings_overrides.json`, which wins over the environment.
+
 ---
 
 ## 12. Project structure
 
 ```
 src/
-  api_server.py            FastAPI app: /health, /api/search, static /data
+  api_server.py            FastAPI app: /health, /api/search, /data PDFs, search access + CORS
+  admin_api.py             /api/admin/* routes (token auth, lockout, IP allowlist)
+  admin.py                 book metadata, delete/restore, API keys (PostgreSQL + Elasticsearch)
+  ingest_worker.py         in-process ingestion worker: jobs, polling, maintenance scripts, log
+  runtime_config.py        settings the admin app may change at runtime, persisted overrides
+  db_pool.py               PostgreSQL connection pool for the API
   search.py                search pipeline: retrieve, fuse, rerank, diversify, QA, quote extraction
   ranking.py               model-free helpers: query cleanup, RRF, MMR, dedupe, QA windows
   translit.py              romanized-query detection and IndicXlit transliteration
@@ -706,6 +795,11 @@ frontend/                  React + TypeScript + Tailwind UI
   src/components/ResultCard.tsx   result card with highlighted paragraph
   src/lib/searchApi.ts            API client and response normalisation
   src/lib/textFormat.ts           display cleanup and quote/answer highlighting
+admin/                     Electron admin app (React + TypeScript + Tailwind)
+  electron/main.ts                window, IPC, all server calls (adds the admin token)
+  electron/vault.ts               passkey vault: scrypt + AES-GCM + OS keychain, lockout
+  electron/localControl.ts        docker compose / api.sh control for a server on this computer
+  src/pages/                      Dashboard, Books, Ingestion, Search console, Settings, Access, Servers, Security
 tests/
   eval_search.py           evaluation harness (hit@k, MRR, nDCG, per-group, latency, --compare)
   eval/questions.json      109 labelled questions
@@ -726,7 +820,11 @@ setup.sh, ingestion.sh, api.sh   bootstrap and runner wrappers
 
 ```bash
 # unit tests (no services needed). The env var avoids system ROS pytest plugins that crash collection.
+# tests/test_admin_db.py uses a throwaway `osiss_test` database and is skipped when PostgreSQL is not reachable.
 PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 .venv/bin/python -m pytest tests
+
+# admin app: vault, profile rules and local process control (Node 22), then lint, typecheck and build
+cd admin && npm test && npm run lint && npm run build
 
 # evaluation (needs Postgres, Elasticsearch and the PDFs ingested)
 .venv/bin/python tests/eval_search.py --validate               # check labels against ingested text
@@ -754,12 +852,16 @@ Running the evaluation while the API server is up can run out of GPU memory on a
 * **Frontend build fails with `CustomEvent is not defined`:** Node is too old for Vite 8; use Node 20.19+ or 22.12+.
 * **Garbage Bengali/Hindi text after ingestion:** the OCR language packs are missing (`tesseract --list-langs` must show `ben` and `hin`), or `OCR_FALLBACK=false`.
 * **Romanized queries behave like English:** the transliteration model is missing (`python src/download_models.py`) or `TRANSLIT_ENABLED=false`.
+* **Admin app says "Admin API is disabled":** set `ADMIN_TOKEN` in `.env` and restart `./api.sh`.
+* **Admin app gets 429:** too many wrong admin tokens from that address; wait 15 minutes or fix the token under *Servers*.
+* **Behind a reverse proxy, `ADMIN_ALLOWED_IPS` sees the proxy's address:** uvicorn only trusts `X-Forwarded-For` from `127.0.0.1` by default (`FORWARDED_ALLOW_IPS`).
 
 ---
 
 ## 15. Roadmap
 
-1. **Metadata and admin app** (an Electron app): upload a PDF, enter title / author / year / department by hand, ingest, edit metadata (updating Postgres and Elasticsearch in place), delete a book. Fixes the wrong titles.
+1. ~~**Metadata and admin app**~~ — done: see [Admin app](#admin-app). Next: fix the existing guessed titles with it, and add
+   user logins if search must be private while a public website is up.
 2. **A trustworthy accuracy number:** 50–100 natural questions written independently in all three languages.
 3. **Cross-language retrieval:** the language-mismatch BM25 rule and a reranker blend ([8.6](#86-experiment-soft-bm25-weight-for-cross-language-questions)), validated on a larger cross-language set.
 4. **Quote quality:** better sentence splitting around section numbers and a fallback when the QA span is a fragment.

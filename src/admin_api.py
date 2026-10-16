@@ -33,6 +33,8 @@ STARTED_AT = time.time()
 MAX_AUTH_FAILURES = 10
 AUTH_WINDOW_SECONDS = 15 * 60
 MIN_TOKEN_LENGTH = 24
+# A delete waits this long for a running ingestion (e.g. a long OCR job) before answering 409.
+DELETE_LOCK_TIMEOUT_SECONDS = 10
 
 
 class _Context:
@@ -297,10 +299,12 @@ def delete_book(book_id: int) -> Dict[str, Any]:
 
     try:
         with db() as connection:
-            with ingest.ingest_lock(connection):
+            with ingest.ingest_lock(connection, timeout=DELETE_LOCK_TIMEOUT_SECONDS):
                 book = admin.exclude_and_delete_book(connection, context.es_client(), book_id)
     except admin.AdminError as exc:
         _fail(exc)
+    except ingest.IngestBusy as exc:
+        raise HTTPException(409, str(exc)) from exc
     return {"deleted": book_id, "file_path": book["file_path"], "file_kept": True}
 
 

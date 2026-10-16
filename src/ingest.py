@@ -76,12 +76,31 @@ METADATA_FIELDS = ("title", "author", "publication_year", "department")
 Log = Callable[[str], None]
 
 
+class IngestBusy(RuntimeError):
+    """The ingestion lock was not free within the requested time."""
+
+
 @contextmanager
-def ingest_lock(connection) -> Iterator[None]:
-    """Hold the ingestion advisory lock (session level, so it spans the transactions inside)."""
-    with connection.cursor() as cursor:
-        cursor.execute("SELECT pg_advisory_lock(%s)", (INGEST_LOCK_KEY,))
-    connection.commit()
+def ingest_lock(connection, timeout: Optional[float] = None) -> Iterator[None]:
+    """Hold the ingestion advisory lock (session level, so it spans the transactions inside).
+
+    Waits indefinitely by default; with `timeout` (seconds) raises IngestBusy instead of waiting longer.
+    """
+    deadline = None if timeout is None else time.monotonic() + timeout
+    while True:
+        with connection.cursor() as cursor:
+            if deadline is None:
+                cursor.execute("SELECT pg_advisory_lock(%s)", (INGEST_LOCK_KEY,))
+                acquired = True
+            else:
+                cursor.execute("SELECT pg_try_advisory_lock(%s)", (INGEST_LOCK_KEY,))
+                acquired = cursor.fetchone()[0]
+        connection.commit()
+        if acquired:
+            break
+        if time.monotonic() >= deadline:
+            raise IngestBusy("Ingestion is busy with another book; try again when it finishes.")
+        time.sleep(0.2)
     try:
         yield
     finally:

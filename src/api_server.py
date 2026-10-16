@@ -42,17 +42,24 @@ os.makedirs(DATA_DIR, exist_ok=True)
 PUBLIC_PREFIXES = ("/api/search", "/data/")
 
 
-def ensure_schema() -> None:
-    """Create tables added after the first setup (excluded_files, api_clients); idempotent."""
+def ensure_schema(wait_seconds: float = 0) -> bool:
+    """Create tables added after the first setup; idempotent. Retries for up to `wait_seconds` (the database may
+    still be starting when several containers come up together). Returns whether it succeeded."""
     from db_init import POSTGRES_SCHEMA_SQL  # pylint: disable=import-outside-toplevel
 
-    try:
-        with db() as connection:
-            with connection:
-                with connection.cursor() as cursor:
-                    cursor.execute(POSTGRES_SCHEMA_SQL)
-    except Exception as exc:  # pylint: disable=broad-except
-        print(f"[OSISS] Could not update the PostgreSQL schema yet: {exc}")
+    deadline = time.monotonic() + wait_seconds
+    while True:
+        try:
+            with db() as connection:
+                with connection:
+                    with connection.cursor() as cursor:
+                        cursor.execute(POSTGRES_SCHEMA_SQL)
+            return True
+        except Exception as exc:  # pylint: disable=broad-except
+            if time.monotonic() >= deadline:
+                print(f"[OSISS] Could not update the PostgreSQL schema yet: {exc}")
+                return False
+            time.sleep(2)
 
 
 def start_admin_worker() -> None:
@@ -80,7 +87,8 @@ async def lifespan(_app: FastAPI):
     stop = threading.Event()
     if settings.state_backend == "postgres":
         # Settings, jobs and lockouts live in PostgreSQL in this mode, so the tables must exist first.
-        ensure_schema()
+        if not ensure_schema(wait_seconds=120):
+            raise RuntimeError("STATE_BACKEND=postgres but PostgreSQL is unreachable; not starting.")
     else:
         threading.Thread(target=ensure_schema, name="osiss-schema", daemon=True).start()
     for warning in runtime_config.load_overrides():

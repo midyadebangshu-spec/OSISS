@@ -278,3 +278,21 @@ def test_upload_job_promotes_into_s3_and_ingests(pipeline, pg, s3):
         cursor.execute("SELECT source_version FROM books WHERE id = %s", (done.book_id,))
         assert cursor.fetchone()[0]  # ETag remembered: the next scan will not download it again
     pg.rollback()
+
+
+def test_sync_models_round_trip(s3, tmp_path, override):
+    import sync_models
+
+    source = tmp_path / "models"
+    (source / "BAAI_bge-m3").mkdir(parents=True)
+    (source / "BAAI_bge-m3" / "model.safetensors").write_bytes(b"weights")
+    (source / "english_vocab.txt").write_text("light\n")
+    uri = f"s3://{BUCKET}/models/"
+    assert sync_models.upload(str(source), uri) == 2
+    assert sync_models.upload(str(source), uri) == 0  # unchanged files are skipped
+    target = tmp_path / "fresh"
+    assert sync_models.download(uri, str(target)) == 2
+    assert (target / "BAAI_bge-m3" / "model.safetensors").read_bytes() == b"weights"
+    assert sync_models.download(uri, str(target)) == 0
+    with pytest.raises(ValueError):
+        sync_models.split_uri("https://not-s3")

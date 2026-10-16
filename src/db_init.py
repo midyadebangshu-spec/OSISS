@@ -9,6 +9,9 @@ from config import settings
 
 
 POSTGRES_SCHEMA_SQL = """
+-- Several API copies may start at once: serialise schema changes (concurrent CREATE ... IF NOT EXISTS can fail).
+SELECT pg_advisory_xact_lock(7051156);
+
 CREATE TABLE IF NOT EXISTS books (
     id SERIAL PRIMARY KEY,
     title TEXT NOT NULL,
@@ -174,7 +177,14 @@ def init_elasticsearch() -> None:
         print(f"[OSISS] Elasticsearch index '{index_name}' already exists (mapping up to date).")
         return
 
-    client.indices.create(index=index_name, body=mapping)
+    try:
+        client.indices.create(index=index_name, body=mapping)
+    except Exception as exc:  # pylint: disable=broad-except
+        # Another copy created it in the meantime.
+        if "resource_already_exists_exception" not in str(exc):
+            raise
+        print(f"[OSISS] Elasticsearch index '{index_name}' was just created by another process.")
+        return
     print(f"[OSISS] Elasticsearch index '{index_name}' created.")
 
 

@@ -24,9 +24,10 @@ import torch
 
 from clients import get_elasticsearch_client, get_postgres_connection
 from config import settings
+from db_init import init_postgres
+from storage import get_storage
 from utils import (
     build_page_aware_chunks,
-    compute_file_hash,
     detect_language_code,
     extract_pdf_pages,
     is_exercise_chunk,
@@ -47,24 +48,18 @@ def resolve_embedder_device() -> str:
     return "cuda" if torch.cuda.is_available() else "cpu"
 
 
-def list_pdf_files(pdf_dir: str) -> List[str]:
-    """Return all PDF paths from the source directory, sorted for determinism."""
-    if not os.path.isdir(pdf_dir):
-        return []
-
-    entries = []
-    for name in os.listdir(pdf_dir):
-        if name.lower().endswith(".pdf"):
-            entries.append(os.path.join(pdf_dir, name))
-    return sorted(entries)
-
-
-def fetch_ingested_books(connection) -> Dict[str, Tuple[int, Optional[str]]]:
-    """Map file_path -> (book_id, file_hash) for books already in PostgreSQL."""
+def fetch_ingested_books(connection) -> Dict[str, Tuple[int, Optional[str], Optional[str]]]:
+    """Map file_path -> (book_id, file_hash, source_version) for books already in PostgreSQL."""
     with connection.cursor() as cursor:
-        cursor.execute("SELECT file_path, id, file_hash FROM books")
+        cursor.execute("SELECT file_path, id, file_hash, source_version FROM books")
         rows = cursor.fetchall()
-    return {row[0]: (row[1], row[2]) for row in rows}
+    return {row[0]: (row[1], row[2], row[3]) for row in rows}
+
+
+def set_source_version(connection, book_id: int, version: Optional[str]) -> None:
+    with connection:
+        with connection.cursor() as cursor:
+            cursor.execute("UPDATE books SET source_version = %s WHERE id = %s", (version, book_id))
 
 
 # Key of the PostgreSQL advisory lock held while a book is added, re-ingested or deleted, so the polling ingester
@@ -143,11 +138,13 @@ def delete_book(connection, es_client, book_id: int) -> None:
             cursor.execute("DELETE FROM books WHERE id = %s", (book_id,))
 
 
-def insert_book(connection, metadata: Dict, file_path: str, file_hash: str) -> int:
+def insert_book(
+    connection, metadata: Dict, file_path: str, file_hash: str, source_version: Optional[str] = None
+) -> int:
     """Insert a book record and return its ID."""
     query = """
-    INSERT INTO books (title, author, publication_year, department, file_path, language_code, file_hash)
-    VALUES (%s, %s, %s, %s, %s, %s, %s)
+    INSERT INTO books (title, author, publication_year, department, file_path, language_code, file_hash, source_version)
+    VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
     RETURNING id
     """
 
@@ -162,6 +159,7 @@ def insert_book(connection, metadata: Dict, file_path: str, file_hash: str) -> i
                 file_path,
                 metadata.get("language_code"),
                 file_hash,
+                source_version,
             ),
         )
         return cursor.fetchone()[0]
@@ -195,11 +193,13 @@ def process_pdf(
     embedder: SentenceTransformer,
     file_hash: str,
     metadata: Optional[Dict] = None,
+    source_version: Optional[str] = None,
 ) -> Tuple[bool, str]:
     """Process a single PDF and index all extracted chunks.
 
     `metadata` (title / author / publication_year / department) comes from the admin app or a previous
-    ingestion of the same file; without it the fields are guessed from the file name.
+    ingestion of the same file; without it the fields are guessed from the file name. `file_path` may be an
+    `s3://` URI (STORAGE_BACKEND=s3); it is downloaded to a temporary file for extraction.
 
     Returns:
     - (True, message) on success.
@@ -207,7 +207,8 @@ def process_pdf(
     """
     try:
         metadata = dict(metadata) if metadata else infer_metadata_from_filename(file_path)
-        pages = extract_pdf_pages(file_path)
+        with get_storage().local_copy(file_path) as local_file:
+            pages = extract_pdf_pages(local_file)
         if not pages:
             return False, f"No readable text found in '{file_path}'."
 
@@ -228,7 +229,7 @@ def process_pdf(
         metadata["language_code"] = Counter(chunk_languages).most_common(1)[0][0]
 
         with connection:
-            book_id = insert_book(connection, metadata, file_path, file_hash)
+            book_id = insert_book(connection, metadata, file_path, file_hash, source_version)
 
             texts = [sanitize_text(chunk_text) for _, chunk_text in chunks]
             embeddings = embedder.encode(texts, normalize_embeddings=True, convert_to_numpy=True)
@@ -293,20 +294,28 @@ def plan_for_path(connection, path: str, file_hash: str) -> Tuple[str, Optional[
     return ("changed", book_id) if stored_hash != file_hash else ("skip", book_id)
 
 
-def ingest_path(connection, es_client, embedder, path: str, log: Log = print) -> bool:
-    """Ingest one PDF from the source directory if it is new or changed (under the ingestion lock).
+def ingest_path(
+    connection, es_client, embedder, path: str, log: Log = print, version: Optional[str] = None
+) -> bool:
+    """Ingest one stored PDF if it is new or changed (under the ingestion lock).
 
-    A changed file keeps the metadata of its previous ingestion. Returns True when a book was (re)ingested.
+    A changed file keeps the metadata of its previous ingestion. `version` is the S3 ETag (None for local
+    files), remembered so later scans can skip the object without downloading it. Returns True when a book was
+    (re)ingested.
     """
     with ingest_lock(connection):
-        file_hash = compute_file_hash(path)
+        file_hash = get_storage().file_hash(path)
         action, book_id = plan_for_path(connection, path, file_hash)
         connection.rollback()
         if action == "skip":
+            if book_id is not None and version is not None:
+                set_source_version(connection, book_id, version)  # same content, new ETag (e.g. re-uploaded)
             return False
         if action == "backfill":
             with connection:
                 set_book_hash(connection, book_id, file_hash)
+            if version is not None:
+                set_source_version(connection, book_id, version)
             return False
 
         metadata = None
@@ -316,36 +325,48 @@ def ingest_path(connection, es_client, embedder, path: str, log: Log = print) ->
             connection.rollback()
             delete_book(connection, es_client, book_id)
 
-        ok, message = process_pdf(path, connection, es_client, embedder, file_hash, metadata=metadata)
+        ok, message = process_pdf(
+            path, connection, es_client, embedder, file_hash, metadata=metadata, source_version=version
+        )
         log(f"[OSISS] {message}" if ok else f"[OSISS] ERROR: {message}")
         return ok
 
 
 def scan_once(connection, es_client, embedder, only: Optional[List[str]] = None, log: Log = print) -> int:
-    """One pass over the PDF directory; returns how many books were (re)ingested.
+    """One pass over the stored PDFs (PDF_DIR or the S3 prefix); returns how many books were (re)ingested.
 
-    The cheap pre-check runs without the lock; each candidate is re-checked under it in `ingest_path`.
+    The cheap pre-check runs without the lock; each candidate is re-checked under it in `ingest_path`. Local files
+    are compared by content hash; S3 objects by ETag, so unchanged objects are never downloaded.
     """
+    storage = get_storage()
     with connection:
         known_books = fetch_ingested_books(connection)
         excluded = fetch_excluded_files(connection)
 
-    candidates: List[str] = []
-    for path in list_pdf_files(settings.pdf_dir):
+    candidates = []
+    for stored in storage.list_pdfs():
+        path = stored.path
         if only and not any(part.lower() in os.path.basename(path).lower() for part in only):
             continue
         if path in excluded:
             continue
         known = known_books.get(path)
-        if known is None or known[1] is None or known[1] != compute_file_hash(path):
-            candidates.append(path)
+        if known is None or known[1] is None:
+            candidates.append(stored)
+        elif stored.version is not None:
+            if known[2] != stored.version:
+                candidates.append(stored)
+        elif known[1] != storage.file_hash(path):
+            candidates.append(stored)
 
     if not candidates:
         log("[OSISS] No new or changed PDFs found.")
         return 0
 
     log(f"[OSISS] Found {len(candidates)} new or changed PDF(s).")
-    return sum(1 for path in candidates if ingest_path(connection, es_client, embedder, path, log))
+    return sum(
+        1 for stored in candidates if ingest_path(connection, es_client, embedder, stored.path, log, stored.version)
+    )
 
 
 def run_ingestion_loop(once: bool, only: Optional[List[str]] = None) -> int:
@@ -354,6 +375,7 @@ def run_ingestion_loop(once: bool, only: Optional[List[str]] = None) -> int:
     `only` restricts work to PDFs whose file name contains one of the given substrings.
     """
     try:
+        init_postgres()  # idempotent; adds columns newer versions need (e.g. books.source_version)
         connection = get_postgres_connection()
         es_client = get_elasticsearch_client()
         embedder_device = resolve_embedder_device()
@@ -364,7 +386,7 @@ def run_ingestion_loop(once: bool, only: Optional[List[str]] = None) -> int:
         return 1
 
     print("[OSISS] Ingestion pipeline started.")
-    print(f"[OSISS] Watching directory: {settings.pdf_dir}")
+    print(f"[OSISS] Watching: {get_storage().root}")
 
     try:
         while True:

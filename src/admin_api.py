@@ -15,10 +15,11 @@ import shutil
 import threading
 import time
 from collections import defaultdict, deque
+from urllib.parse import quote
 from typing import Any, Deque, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
 import admin
@@ -349,7 +350,17 @@ def book_pdf(book_id: int):
         _fail(exc)
     if not book["file_exists"]:
         raise HTTPException(404, "PDF file is missing on the server.")
-    return FileResponse(book["file_path"], media_type="application/pdf", filename=os.path.basename(book["file_path"]))
+    from storage import get_storage, is_s3_path  # pylint: disable=import-outside-toplevel
+
+    name = os.path.basename(book["file_path"])
+    if is_s3_path(book["file_path"]):
+        # Streamed rather than redirected: the admin app refuses redirects so its token never follows one.
+        chunks, size = get_storage().stream(book["file_path"])
+        headers = {"Content-Disposition": f"attachment; filename*=UTF-8''{quote(name)}"}
+        if size is not None:
+            headers["Content-Length"] = str(size)
+        return StreamingResponse(chunks, media_type="application/pdf", headers=headers)
+    return FileResponse(book["file_path"], media_type="application/pdf", filename=name)
 
 
 @router.get("/metadata-guess")
@@ -377,8 +388,10 @@ def upload_book(
     except admin.AdminError as exc:
         _fail(exc)
 
-    os.makedirs(settings.upload_dir, exist_ok=True)
-    staged = os.path.join(settings.upload_dir, f".upload-{os.urandom(8).hex()}.pdf")
+    from storage import get_storage  # pylint: disable=import-outside-toplevel
+
+    storage = get_storage()
+    staged = storage.new_staging_file()
     digest = hashlib.sha256()
     size, limit = 0, settings.upload_max_mb * 1024 * 1024
     try:
@@ -407,6 +420,8 @@ def upload_book(
         if os.path.exists(staged):
             os.remove(staged)
         raise
+    # Local storage: the file already is in UPLOAD_DIR. S3: it goes to the staging prefix, reachable by any worker.
+    staged = storage.stage(staged, file_hash)
 
     job = _worker().submit(
         "upload", f"Upload '{metadata['title']}'", staged_path=staged, file_name=file_name, file_hash=file_hash,

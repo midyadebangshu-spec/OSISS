@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import io
 import os
-import shutil
 import subprocess
 import sys
 import threading
@@ -24,6 +23,7 @@ from typing import Any, Callable, Dict, List, Optional
 from config import settings
 from job_store import Job, MemoryJobStore, PostgresJobStore  # noqa: F401  (Job is re-exported)
 from replica import replica_id
+from storage import get_storage
 
 SRC_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_ROOT = os.path.dirname(SRC_DIR)
@@ -248,9 +248,16 @@ class IngestWorker:
 
     @staticmethod
     def _cleanup(job: Job) -> None:
+        """Remove an upload's staged file if the job did not move it into storage (failed or cancelled)."""
         staged = job.params.get("staged_path")
-        if staged and os.path.exists(staged):
-            os.remove(staged)
+        if not staged:
+            return
+        try:
+            storage = get_storage()
+            if storage.staged_exists(staged):
+                storage.discard(staged)
+        except Exception as exc:  # pylint: disable=broad-except
+            print(f"[OSISS] Could not remove staged upload {staged}: {exc}")
 
     # --- job kinds ------------------------------------------------------------------------------------------------
 
@@ -262,7 +269,7 @@ class IngestWorker:
         return f"{count} book(s) ingested."
 
     def _job_upload(self, job: Job) -> str:
-        """Move a staged upload into PDF_DIR and ingest it with the admin's metadata, under the lock."""
+        """Give a staged upload its final name in storage and ingest it with the admin's metadata, under the lock."""
         import admin  # pylint: disable=import-outside-toplevel
         import ingest  # pylint: disable=import-outside-toplevel
 
@@ -274,11 +281,13 @@ class IngestWorker:
             if duplicate:
                 job.book_id = duplicate["id"]
                 raise RuntimeError(f"Same file is already ingested as book {duplicate['id']} ('{duplicate['title']}').")
-            os.makedirs(settings.pdf_dir, exist_ok=True)
-            target = admin.unique_pdf_path(settings.pdf_dir, params["file_name"])
-            shutil.move(params["staged_path"], target)
+            storage = get_storage()
+            if not storage.staged_exists(params["staged_path"]):
+                raise RuntimeError("The uploaded file is no longer in the staging area; upload it again.")
+            target = storage.promote(params["staged_path"], params["file_name"], params["file_hash"])
             ok, message = ingest.process_pdf(
-                target, connection, self._es_client(), self._embedder(), params["file_hash"], params["metadata"]
+                target, connection, self._es_client(), self._embedder(), params["file_hash"], params["metadata"],
+                source_version=storage.version(target),
             )
             if not ok:
                 # Keep the file but exclude it, so the poller does not retry it with file-name metadata.
@@ -311,19 +320,20 @@ class IngestWorker:
         """Re-extract and re-embed a book from its file, keeping its metadata."""
         import admin  # pylint: disable=import-outside-toplevel
         import ingest  # pylint: disable=import-outside-toplevel
-        from utils import compute_file_hash  # pylint: disable=import-outside-toplevel
-
         connection = self._db()
         with ingest.ingest_lock(connection):
             book = admin.get_book(connection, job.book_id)
             connection.rollback()
             path = book["file_path"]
-            if not os.path.isfile(path):
+            storage = get_storage()
+            if not storage.exists(path):
                 raise RuntimeError(f"PDF file is missing: {path}")
             metadata = {name: book[name] for name in admin.METADATA_FIELDS}
+            file_hash = storage.file_hash(path)
             ingest.delete_book(connection, self._es_client(), job.book_id)
             ok, message = ingest.process_pdf(
-                path, connection, self._es_client(), self._embedder(), compute_file_hash(path), metadata
+                path, connection, self._es_client(), self._embedder(), file_hash, metadata,
+                source_version=storage.version(path),
             )
             if not ok:
                 self._exclude_failed(connection, path, {"file_hash": book["file_hash"], "metadata": metadata})
@@ -335,21 +345,22 @@ class IngestWorker:
         """Ingest a deleted book's PDF again with the metadata it had."""
         import admin  # pylint: disable=import-outside-toplevel
         import ingest  # pylint: disable=import-outside-toplevel
-        from utils import compute_file_hash  # pylint: disable=import-outside-toplevel
-
         path = job.params["file_path"]
         connection = self._db()
         with ingest.ingest_lock(connection):
             excluded = admin.get_excluded(connection, path)
             connection.rollback()
-            if not os.path.isfile(path):
+            storage = get_storage()
+            if not storage.exists(path):
                 raise RuntimeError(f"PDF file is missing: {path}")
             metadata = {name: excluded["metadata"].get(name) for name in admin.METADATA_FIELDS}
             if not metadata.get("title"):
                 metadata = None
+            file_hash = storage.file_hash(path)
             admin.remove_exclusion(connection, path)
             ok, message = ingest.process_pdf(
-                path, connection, self._es_client(), self._embedder(), compute_file_hash(path), metadata
+                path, connection, self._es_client(), self._embedder(), file_hash, metadata,
+                source_version=storage.version(path),
             )
             if not ok:
                 self._exclude_failed(

@@ -36,19 +36,32 @@ class AdminError(Exception):
 
 
 def pdf_link(file_path: str) -> str:
-    """URL path of a stored PDF as served by the API (`./data/pdfs/x.pdf` -> `/data/pdfs/x.pdf`)."""
-    normalized = file_path[2:] if file_path.startswith("./") else file_path
-    if normalized and not normalized.startswith("/"):
-        normalized = f"/{normalized}"
+    """URL of a stored PDF as served by the API (`./data/pdfs/x.pdf` or `s3://bucket/pdfs/x.pdf` -> `/data/pdfs/x.pdf`),
+    absolute when PUBLIC_BASE_URL is set."""
+    from storage import pdf_url_path  # pylint: disable=import-outside-toplevel
+
+    normalized = pdf_url_path(file_path)
     base = settings.public_base_url.rstrip("/")
     return f"{base}{normalized}" if base and normalized.startswith("/") else normalized
 
 
-def _book_row(row, description) -> Dict[str, Any]:
+def _existing(paths: List[str]) -> set:
+    """Which of these stored PDFs exist (one listing for S3 rather than a request per book)."""
+    from storage import get_storage  # pylint: disable=import-outside-toplevel
+
+    try:
+        return get_storage().exists_many(paths)
+    except Exception:  # pylint: disable=broad-except
+        return set(paths)  # storage unreachable: do not flag every book as missing
+
+
+def _book_row(row, description, existing: Optional[set] = None) -> Dict[str, Any]:
     book = dict(zip([column.name for column in description], row))
     book["created_at"] = book["created_at"].isoformat() if book.get("created_at") else None
     book["pdf_link"] = pdf_link(book["file_path"])
-    book["file_exists"] = os.path.isfile(book["file_path"])
+    if existing is None:
+        existing = _existing([book["file_path"]])
+    book["file_exists"] = book["file_path"] in existing
     book["title_guessed"] = looks_guessed(book)
     return book
 
@@ -69,7 +82,9 @@ def list_books(connection) -> List[Dict[str, Any]]:
             f"SELECT {BOOK_COLUMNS} FROM books b LEFT JOIN chunks c ON c.book_id = b.id "
             "GROUP BY b.id ORDER BY lower(b.title), b.id"
         )
-        return [_book_row(row, cursor.description) for row in cursor.fetchall()]
+        rows = cursor.fetchall()
+        existing = _existing([row[5] for row in rows])  # file_path is the 6th column
+        return [_book_row(row, cursor.description, existing) for row in rows]
 
 
 def get_book(connection, book_id: int) -> Dict[str, Any]:
@@ -178,13 +193,14 @@ def list_excluded(connection) -> List[Dict[str, Any]]:
     with connection.cursor() as cursor:
         cursor.execute("SELECT file_path, file_hash, metadata, deleted_at FROM excluded_files ORDER BY deleted_at DESC")
         rows = cursor.fetchall()
+    existing = _existing([row[0] for row in rows])
     return [
         {
             "file_path": path,
             "file_hash": file_hash,
             "metadata": metadata or {},
             "deleted_at": deleted_at.isoformat() if deleted_at else None,
-            "file_exists": os.path.isfile(path),
+            "file_exists": path in existing,
             "pdf_link": pdf_link(path),
         }
         for path, file_hash, metadata, deleted_at in rows
@@ -216,22 +232,6 @@ def safe_pdf_name(name: str) -> str:
     )
     stem = re.sub(r"_+", "_", stem).strip(" ._")[:150]
     return f"{stem or 'upload'}.pdf"
-
-
-def unique_pdf_path(directory: str, name: str) -> str:
-    """`directory/name`, with ` (2)`, ` (3)`... appended when that file already exists."""
-    stem, ext = os.path.splitext(name)
-    candidate = os.path.join(directory, name)
-    counter = 2
-    while os.path.exists(candidate):
-        candidate = os.path.join(directory, f"{stem} ({counter}){ext}")
-        counter += 1
-    return candidate
-
-
-def source_path(file_name: str) -> str:
-    """Path of a file in the PDF directory in the form the ingester stores (`./data/pdfs/x.pdf`)."""
-    return os.path.join(settings.pdf_dir, file_name)
 
 
 def counts(connection) -> Dict[str, int]:

@@ -11,7 +11,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import urlparse
 
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse, JSONResponse, Response
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
@@ -187,8 +187,14 @@ async def public_access(request: Request, call_next):
 
 
 @app.api_route("/data/{file_path:path}", methods=["GET", "HEAD"])
-def serve_pdf(file_path: str):
-    """Serve PDFs from PDF_DIR only (not other files under data/, such as admin settings or staged uploads)."""
+def serve_pdf(file_path: str, request: Request):
+    """Serve PDFs from PDF_DIR only (not other files under data/, such as admin settings or staged uploads).
+
+    With STORAGE_BACKEND=s3, `/data/pdfs/<name>` redirects to a short-lived signed S3 URL (PDF_SERVE_MODE=redirect;
+    the viewer's `#page=N` survives the redirect) or streams the object (PDF_SERVE_MODE=proxy).
+    """
+    if settings.storage_backend == "s3":
+        return serve_s3_pdf(file_path, request)
     target = os.path.realpath(os.path.join(DATA_DIR, file_path))
     pdf_root = os.path.realpath(os.path.join(PROJECT_ROOT, settings.pdf_dir))
     if not target.lower().endswith(".pdf") or os.path.commonpath([target, pdf_root]) != pdf_root:
@@ -196,6 +202,30 @@ def serve_pdf(file_path: str):
     if not os.path.isfile(target):
         raise HTTPException(404, "Not found")
     return FileResponse(target, media_type="application/pdf")
+
+
+def serve_s3_pdf(file_path: str, request: Request):
+    from botocore.exceptions import ClientError  # pylint: disable=import-outside-toplevel
+    from storage import PDF_URL_PREFIX, get_storage  # pylint: disable=import-outside-toplevel
+
+    prefix = PDF_URL_PREFIX[len("/data/"):]
+    relative = file_path[len(prefix):] if file_path.startswith(prefix) else ""
+    if not relative.lower().endswith(".pdf") or ".." in relative.split("/"):
+        raise HTTPException(404, "Not found")
+    storage = get_storage()
+    path = storage.path_for(relative)
+    try:
+        if settings.pdf_serve_mode == "proxy":
+            chunks, size = storage.stream(path)
+            headers = {"Content-Length": str(size)} if size is not None else {}
+            if request.method == "HEAD":
+                return Response(media_type="application/pdf", headers=headers)
+            return StreamingResponse(chunks, media_type="application/pdf", headers=headers)
+        if not storage.exists(path):
+            raise HTTPException(404, "Not found")
+        return RedirectResponse(storage.signed_url(path), status_code=302)
+    except ClientError as exc:
+        raise HTTPException(404, "Not found") from exc
 
 
 class SearchRequest(BaseModel):

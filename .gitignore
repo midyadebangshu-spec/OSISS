@@ -48,3 +48,10 @@ admin/release/
 
 # Secrets for deploy/docker-compose.replicas.yml
 deploy/replicas.env
+
+# Terraform (deploy/aws)
+.terraform/
+*.tfstate
+*.tfstate.*
+terraform.tfvars
+crash.log

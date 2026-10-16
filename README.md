@@ -656,8 +656,9 @@ Pick the setup that matches how you will run OSISS, do the two common steps firs
 | [B. Campus network](#114-setup-b-a-server-on-the-campus-network) | everyone on the campus network | a server on the campus network | an admin's PC on the same network |
 | [C. Public website](#115-setup-c-a-public-website-on-your-own-domain) | everyone on the internet | a server with a public IP and your domain (e.g. `ossis.com`) | an admin's PC anywhere |
 
-[11.6](#116-everyday-tasks) covers the day-to-day tasks, and [11.7](#117-how-the-app-and-the-server-are-protected) how the app
-and the server are protected.
+[11.6](#116-everyday-tasks) covers the day-to-day tasks, [11.7](#117-how-the-app-and-the-server-are-protected) how the app
+and the server are protected, and [11.8](#118-capacity-and-load) how many searches a server can take and how to protect it
+from overload.
 
 > The screenshots come from a demo server with two sample PDFs and no Elasticsearch or models installed. That is why the
 > Dashboard shows Elasticsearch as down and the models as missing, and why the scores and timings in the search console screenshot are
@@ -834,9 +835,10 @@ This makes search available to everyone on the internet at an address such as `h
 Before going public, consider:
 
 * **Licences:** with open access, anyone can download every PDF. Make sure the books may be shared that way.
-* **Capacity:** one API process holds one copy of the models, and searches that arrive together share it, so each one gets slower
-  as more people search at the same moment. Check the time per search in the Search console on your hardware before announcing the
-  site. Serving heavy public traffic needs several API copies behind a load balancer, which is on the [roadmap](#16-roadmap).
+* **Capacity:** one API process holds one copy of the models, and searches that arrive together share it. Measure how many searches
+  your server answers before announcing the site, and set a per-IP rate limit for the public. Both are covered in
+  [11.8](#118-capacity-and-load). Serving heavy public traffic needs several API copies behind a load balancer, which is on the
+  [roadmap](#16-roadmap).
 * **Updates:** to update, run `git pull`, then `sudo systemctl restart osiss-api`, and rebuild the website if `frontend/` changed.
 
 ### 11.6 Everyday tasks
@@ -916,6 +918,7 @@ check a new book, or to compare a setting before and after a change.
 3. Try a few questions in the Search console, and use **Discard** or change the value back if results get worse.
 
 Settings that need a restart (database addresses, model paths, …) are listed read-only at the bottom; change them in `.env`.
+The **Load protection** group (answer cache, search queue, rate limits) is explained in [11.8](#118-capacity-and-load).
 
 <img src="docs/images/admin/search-settings.png" width="720" alt="Search settings">
 
@@ -981,6 +984,95 @@ curl -X POST https://ossis.com/api/search -H 'Content-Type: application/json' \
   1. Edit `.env` on the server.
   2. Restart the API.
   3. Update the token under **Servers** in each admin app.
+
+### 11.8 Capacity and load
+
+Almost all the time of a search is spent running the models: the embedder, the reranker on about 30 passages, and the
+answer-finding model on about 5. On the 12 GB GPU used for the evaluation that is about 2.3 s for an English question and about
+4 s for a mixed one, with one person searching. One API process holds one copy of the models, so searches that arrive together
+share it.
+
+**What happens to a search**
+
+1. **Rate limit (optional):** more than *Searches per minute per IP* (or *per API key*) gets `429 Too many searches`, with a
+   `Retry-After` header. Off by default: on a campus network many people often share one address.
+2. **Answer cache:** a question asked recently (same words, ignoring case and spacing, same number of results, same search
+   settings) is answered from memory in milliseconds. Editing, deleting, adding, restoring or re-ingesting a book clears the cache
+   at once. *Answer cache time* is the longest an answer is reused, which also covers books added by `ingestion.sh` in a separate
+   process.
+3. **Search queue:** at most `SEARCH_CONCURRENCY` searches (default 2) run the models at the same time. Up to *Search queue limit*
+   more wait their turn in arrival order; beyond that, or after *Queue wait limit* seconds, the server answers
+   `503 The server is busy` with a `Retry-After` header. Visitors then get a quick "try again" instead of a search that hangs, and a
+   spike cannot run the GPU out of memory. The admin search console uses the same queue but is never cached.
+
+The Dashboard's **Search load** card shows the last five minutes:
+
+<img src="docs/images/admin/search-load.png" width="720" alt="Search load card">
+
+* **Searches / minute:** how busy the server is.
+* **Typical time** and **Slow searches:** the median and 95th-percentile response time, without cache hits.
+* **Running now:** how many searches are running and waiting.
+* **From cache:** the share answered from the cache.
+* **Refused:** how many searches were turned away (`429` rate limit, `503` busy).
+* **Where the time goes:** the average time per stage.
+
+The limits are under **Search settings → Load protection** and take effect at once:
+
+<img src="docs/images/admin/load-settings.png" width="720" alt="Load protection settings">
+
+**Measuring your server**
+
+1. In **Search settings → Load protection**, set *Answer cache size* to `0`, so the test measures the models and not the cache.
+   Set it back afterwards.
+2. Run the load test from any machine that can reach the server. Start with one simulated user, then raise the number:
+
+   ```bash
+   .venv/bin/python tests/load_test.py --url http://localhost:8000 --users 1  --duration 60
+   .venv/bin/python tests/load_test.py --url http://localhost:8000 --users 5  --duration 60
+   .venv/bin/python tests/load_test.py --url http://localhost:8000 --users 20 --duration 60 --admin-token "$ADMIN_TOKEN"
+   ```
+
+   Each user asks the 109 evaluation questions one after another. Add `--api-key osk_…` in "approved apps only" mode and
+   `--json report.json` to keep the numbers.
+3. Read the report. *answered … searches/s* is what the server sustains. When it stops growing as you add users, the models are
+   the limit. The response times (p50, p95) are what visitors feel.
+
+For illustration, a demo server where every search takes a simulated 1.24 s gave these results (your numbers will differ):
+
+| Run (10 users) | Searches/s | Typical time (p50) | Refused |
+|---|---|---|---|
+| Cache off, 2 searches at once | 1.6 | 6.2 s | none |
+| Cache off, queue limit 3 | 1.6 | 2.5 s | 10 × `503` busy |
+| Cache off, rate limit 20 per minute | 1.0 | 6.2 s | 10 × `429` |
+| Cache on, 90 s (questions start repeating) | 4.0 | 0.012 s | none |
+
+With the models as the bottleneck, searches per second ≈ `SEARCH_CONCURRENCY` ÷ time per search, and each extra waiting user adds
+to everyone's wait.
+
+**What to change first**
+
+1. **Half precision on a GPU** (`MODEL_PRECISION=fp16`, off by default). It is usually much faster but can change rankings
+   slightly, so check accuracy first. Run the evaluation both ways:
+
+   ```bash
+   .venv/bin/python tests/eval_search.py --mode full --depth 3
+   .venv/bin/python tests/eval_search.py --mode full --depth 3 --set model_precision=fp16
+   ```
+
+   If hit@3 and MRR stay within one or two questions, add `MODEL_PRECISION=fp16` to `.env` and restart the API. The CPU always uses
+   full precision. With fp16 on, books uploaded from the admin app are embedded in half precision too; books ingested by
+   `ingestion.sh` stay full precision. The difference for search is very small.
+2. **Rerank batch size:** on a GPU try `32` (Search settings → Rerank batch size) and watch the GPU memory tile.
+3. **Fewer candidates:** the reranker's work grows with *Retrieval candidates* (30). Try 20 and run the evaluation to see what it
+   costs in accuracy.
+4. **Keep the answer cache on.** Classes often ask the same questions.
+5. **`SEARCH_CONCURRENCY`:** on a large GPU try 3 or 4 (in `.env`, restart). Keep the higher value only if the load test shows
+   more searches per second; if only the response times grow, go back. On a CPU-only server use 1.
+6. **Public site:** set *Searches per minute per IP* (e.g. 20) so one visitor or script cannot take every slot, and give apps
+   their own limit per API key.
+
+When the load test shows that even the tuned server cannot keep up, the next step is several API copies behind a load balancer
+(roadmap item 6).
 
 ---
 
@@ -1063,8 +1155,25 @@ All settings are environment variables, read at import time into the frozen `Set
 | `SERVE_FRONTEND` | `false` | Serve `frontend/dist` at `/` |
 | `API_HOST`, `API_PORT` | `0.0.0.0`, `8000` | Where `api.sh` listens; `127.0.0.1` behind a reverse proxy on the same machine |
 
-Settings marked as runtime-editable in the admin app (search knobs, `POLLING_INTERVAL_SECONDS`, `SEARCH_ACCESS`, `CORS_ORIGINS`,
-`PUBLIC_BASE_URL`) can be overridden from `settings_overrides.json`, which wins over the environment.
+### Load and performance
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `MODEL_PRECISION` | `fp32` | `fp16` or `auto` run the models in half precision on a GPU (the CPU always uses fp32) |
+| `RERANK_BATCH_SIZE` | `8` | (query, passage) pairs per reranker pass |
+| `SEARCH_CACHE_SIZE` | `1000` | Recent answers kept in memory; `0` turns the cache off |
+| `SEARCH_CACHE_TTL_SECONDS` | `600` | Longest an answer is reused (book changes clear the cache at once) |
+| `SEARCH_CONCURRENCY` | `2` | Searches running the models at the same time |
+| `SEARCH_QUEUE_LIMIT` | `50` | Searches allowed to wait; more get `503` |
+| `SEARCH_QUEUE_TIMEOUT_SECONDS` | `60` | Longest wait in the queue before `503` |
+| `SEARCH_RATE_LIMIT_PER_MINUTE` | `0` | Searches per minute per client IP (`0` = no limit); over the limit `429` |
+| `API_KEY_RATE_LIMIT_PER_MINUTE` | `0` | Searches per minute per API key (`0` = no limit) |
+
+See [11.8](#118-capacity-and-load) for how to measure and tune these.
+
+Settings marked as runtime-editable in the admin app (search knobs, `RERANK_BATCH_SIZE`, the load-protection limits,
+`POLLING_INTERVAL_SECONDS`, `SEARCH_ACCESS`, `CORS_ORIGINS`, `PUBLIC_BASE_URL`) can be overridden from `settings_overrides.json`,
+which wins over the environment. `MODEL_PRECISION` and `SEARCH_CONCURRENCY` need a restart.
 
 ---
 
@@ -1078,6 +1187,7 @@ src/
   ingest_worker.py         in-process ingestion worker: jobs, polling, maintenance scripts, log
   runtime_config.py        settings the admin app may change at runtime, persisted overrides
   db_pool.py               PostgreSQL connection pool for the API
+  load_control.py          answer cache, rate limiter, search queue and load metrics
   search.py                search pipeline: retrieve, fuse, rerank, diversify, QA, quote extraction
   ranking.py               model-free helpers: query cleanup, RRF, MMR, dedupe, QA windows
   translit.py              romanized-query detection and IndicXlit transliteration
@@ -1103,6 +1213,7 @@ admin/                     Electron admin app (React + TypeScript + Tailwind)
 tests/
   eval_search.py           evaluation harness (hit@k, MRR, nDCG, per-group, latency, --compare)
   eval/questions.json      109 labelled questions
+  load_test.py             load test: simulated concurrent users against a running server
   test_*.py                unit tests (no services needed)
 docs/
   results.json             every number behind the tables and graphs in this README
@@ -1129,6 +1240,9 @@ PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 .venv/bin/python -m pytest tests
 
 # admin app: vault, profile rules and local process control (Node 22), then lint, typecheck and build
 cd admin && npm test && npm run lint && npm run build
+
+# load test against a running server (see 11.8); tests/test_load.py covers the cache, limits and queue without services
+.venv/bin/python tests/load_test.py --url http://localhost:8000 --users 10 --duration 60
 
 # evaluation (needs Postgres, Elasticsearch and the PDFs ingested)
 .venv/bin/python tests/eval_search.py --validate               # check labels against ingested text

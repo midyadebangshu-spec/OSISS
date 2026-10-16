@@ -75,11 +75,18 @@ def start_admin_worker() -> None:
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
+    stop = threading.Event()
+    if settings.state_backend == "postgres":
+        # Settings, jobs and lockouts live in PostgreSQL in this mode, so the tables must exist first.
+        ensure_schema()
+    else:
+        threading.Thread(target=ensure_schema, name="osiss-schema", daemon=True).start()
     for warning in runtime_config.load_overrides():
         print(f"[OSISS] {warning}")
-    threading.Thread(target=ensure_schema, name="osiss-schema", daemon=True).start()
+    runtime_config.start_sync(stop)
     start_admin_worker()
     yield
+    stop.set()
     if admin_api.context.worker is not None:
         admin_api.context.worker.shutdown()
 

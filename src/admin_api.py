@@ -156,7 +156,9 @@ def _elasticsearch_status() -> Dict[str, Any]:
     from elasticsearch import Elasticsearch  # pylint: disable=import-outside-toplevel
 
     try:
-        client = Elasticsearch(settings.elasticsearch_url, request_timeout=3)
+        from clients import elasticsearch_kwargs  # pylint: disable=import-outside-toplevel
+
+        client = Elasticsearch(settings.elasticsearch_url, request_timeout=3, **elasticsearch_kwargs())
         health = client.cluster.health(request_timeout=3)
         index = settings.elasticsearch_index
         exists = bool(client.indices.exists(index=index))

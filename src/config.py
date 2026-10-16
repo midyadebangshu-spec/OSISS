@@ -86,5 +86,25 @@ class Settings:
     embedding_dim: int = int(os.getenv("EMBEDDING_DIM", "1024"))
     inference_device: str = os.getenv("INFERENCE_DEVICE", "auto").lower()
 
+    # Admin API (/api/admin/*) is disabled unless this is set; setup.sh generates one into .env.
+    admin_token: str = os.getenv("ADMIN_TOKEN", "")
+    # Optional comma-separated IPs / CIDRs allowed to call the admin API (empty = any).
+    admin_allowed_ips: str = os.getenv("ADMIN_ALLOWED_IPS", "")
+    # Uploaded PDFs are staged here until ingestion moves them into PDF_DIR.
+    upload_dir: str = os.getenv("UPLOAD_DIR", "./data/uploads")
+    upload_max_mb: int = int(os.getenv("UPLOAD_MAX_MB", "500"))
+    # Settings changed from the admin app; loaded at API startup over the environment values.
+    settings_overrides_path: str = os.getenv("SETTINGS_OVERRIDES_PATH", "./data/admin/settings_overrides.json")
+
+    # Who may call /api/search and /data: "open" (anyone), "key" (X-API-Key or an allowed origin), or "" (not
+    # chosen yet by the admin; behaves like "open").
+    search_access: str = os.getenv("SEARCH_ACCESS", "").lower()
+    # Comma-separated browser origins allowed to call the search API (CORS), e.g. https://search.example.edu.
+    cors_origins: str = os.getenv("CORS_ORIGINS", "")
+    # When set, pdf_link in search results is absolute (for apps calling the API from elsewhere).
+    public_base_url: str = os.getenv("PUBLIC_BASE_URL", "")
+    # Serve the built web frontend (frontend/dist) at / from the API process.
+    serve_frontend: bool = os.getenv("SERVE_FRONTEND", "false").lower() in {"1", "true", "yes"}
+
 
 settings = Settings()

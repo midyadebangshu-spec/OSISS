@@ -4,9 +4,13 @@ from __future__ import annotations
 
 import os
 import sys
+import threading
+from contextlib import asynccontextmanager
 from typing import Any, Dict, List, Optional
+from urllib.parse import urlparse
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -14,18 +18,160 @@ CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
 if CURRENT_DIR not in sys.path:
     sys.path.insert(0, CURRENT_DIR)
 
+import admin
+import admin_api
+import runtime_config
+from config import settings
+from db_pool import db
 from search import search_and_extract
 
 
 # QA answers scoring below this are near-random spans; the UI should not highlight them as "the answer".
 ANSWER_MIN_SCORE = 0.02
 
-app = FastAPI(title="OSISS API", version="1.0.0")
-
 PROJECT_ROOT = os.path.abspath(os.path.join(CURRENT_DIR, ".."))
 DATA_DIR = os.path.join(PROJECT_ROOT, "data")
+FRONTEND_DIST = os.path.join(PROJECT_ROOT, "frontend", "dist")
 os.makedirs(DATA_DIR, exist_ok=True)
-app.mount("/data", StaticFiles(directory=DATA_DIR), name="data")
+
+# Paths the search-access rule (open / key) and CORS apply to. Admin routes have their own token auth.
+PUBLIC_PREFIXES = ("/api/search", "/data/")
+
+
+def ensure_schema() -> None:
+    """Create tables added after the first setup (excluded_files, api_clients); idempotent."""
+    from db_init import POSTGRES_SCHEMA_SQL  # pylint: disable=import-outside-toplevel
+
+    try:
+        with db() as connection:
+            with connection:
+                with connection.cursor() as cursor:
+                    cursor.execute(POSTGRES_SCHEMA_SQL)
+    except Exception as exc:  # pylint: disable=broad-except
+        print(f"[OSISS] Could not update the PostgreSQL schema yet: {exc}")
+
+
+def start_admin_worker() -> None:
+    """Start the in-process ingestion worker the admin app controls (only when the admin API is enabled)."""
+    if not settings.admin_token:
+        print("[OSISS] ADMIN_TOKEN is not set; admin API and ingestion worker are disabled.")
+        return
+    import db_pool  # pylint: disable=import-outside-toplevel
+    import search  # pylint: disable=import-outside-toplevel
+    from ingest_worker import IngestWorker  # pylint: disable=import-outside-toplevel
+
+    worker = IngestWorker(
+        connect=db_pool.connect, es_client=search.get_es_client, embedder=lambda: search.get_models()[0]
+    )
+    worker.start(polling=bool(runtime_config.get_state("ingester_polling", False)))
+    admin_api.context.worker = worker
+
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    for warning in runtime_config.load_overrides():
+        print(f"[OSISS] {warning}")
+    threading.Thread(target=ensure_schema, name="osiss-schema", daemon=True).start()
+    start_admin_worker()
+    yield
+    if admin_api.context.worker is not None:
+        admin_api.context.worker.shutdown()
+
+
+app = FastAPI(title="OSISS API", version=admin_api.VERSION, lifespan=lifespan)
+
+admin_api.context.es_client = lambda: __import__("search").get_es_client()
+admin_api.context.search = lambda query, top_k, timings: search_and_extract(query, top_k, timings=timings)
+app.include_router(admin_api.router)
+
+
+def same_site(request: Request) -> bool:
+    """Request made by a page served from this server (or from PUBLIC_BASE_URL)."""
+    if request.headers.get("sec-fetch-site") == "same-origin":
+        return True
+    hosts = {request.headers.get("host", "").lower()}
+    if settings.public_base_url:
+        hosts.add(urlparse(settings.public_base_url).netloc.lower())
+    for header in ("origin", "referer"):
+        value = request.headers.get(header)
+        if value and urlparse(value).netloc.lower() in hosts:
+            return True
+    return False
+
+
+def from_allowed_origin(request: Request) -> bool:
+    allowed = set(runtime_config.cors_origin_list())
+    if not allowed:
+        return False
+    origin = (request.headers.get("origin") or "").rstrip("/").lower()
+    if origin in allowed:
+        return True
+    referer = urlparse(request.headers.get("referer") or "")
+    return bool(referer.netloc) and f"{referer.scheme}://{referer.netloc}".lower() in allowed
+
+
+def check_search_access(request: Request) -> Optional[Response]:
+    """In "key" mode, a request needs a valid API key or must come from this site / an allowed origin.
+
+    Browsers set Origin, Referer and Sec-Fetch-Site honestly, so this keeps other websites out; a script can
+    forge them, which is why the website exemption is a light lock and the API key is the real one.
+    """
+    if settings.search_access != "key":
+        return None
+    key = request.headers.get("x-api-key") or (
+        request.query_params.get("key") if request.url.path.startswith("/data/") else None
+    )
+    if key:
+        try:
+            with db() as connection:
+                if admin.use_api_key(connection, key) is not None:
+                    return None
+        except Exception:  # pylint: disable=broad-except
+            return JSONResponse({"detail": "API key check is unavailable (database down)."}, status_code=503)
+        return JSONResponse({"detail": "Invalid or disabled API key."}, status_code=401)
+    if same_site(request) or from_allowed_origin(request):
+        return None
+    return JSONResponse({"detail": "An API key is required (X-API-Key header)."}, status_code=401)
+
+
+def cors_headers(request: Request) -> Dict[str, str]:
+    origin = (request.headers.get("origin") or "").rstrip("/")
+    if not origin or origin.lower() not in set(runtime_config.cors_origin_list()):
+        return {}
+    return {
+        "Access-Control-Allow-Origin": origin,
+        "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+        "Access-Control-Allow-Headers": "Content-Type, X-API-Key",
+        "Access-Control-Max-Age": "600",
+        "Vary": "Origin",
+    }
+
+
+@app.middleware("http")
+async def public_access(request: Request, call_next):
+    """CORS for allowed origins and the open/key access rule on search and PDF routes."""
+    path = request.url.path
+    if not (path.startswith(PUBLIC_PREFIXES) or path == "/health"):
+        return await call_next(request)
+    headers = cors_headers(request)
+    if request.method == "OPTIONS" and request.headers.get("access-control-request-method"):
+        return Response(status_code=204 if headers else 403, headers=headers)
+    denied = None if path == "/health" else check_search_access(request)
+    response = denied or await call_next(request)
+    response.headers.update(headers)
+    return response
+
+
+@app.api_route("/data/{file_path:path}", methods=["GET", "HEAD"])
+def serve_pdf(file_path: str):
+    """Serve PDFs from PDF_DIR only (not other files under data/, such as admin settings or staged uploads)."""
+    target = os.path.realpath(os.path.join(DATA_DIR, file_path))
+    pdf_root = os.path.realpath(os.path.join(PROJECT_ROOT, settings.pdf_dir))
+    if not target.lower().endswith(".pdf") or os.path.commonpath([target, pdf_root]) != pdf_root:
+        raise HTTPException(404, "Not found")
+    if not os.path.isfile(target):
+        raise HTTPException(404, "Not found")
+    return FileResponse(target, media_type="application/pdf")
 
 
 class SearchRequest(BaseModel):
@@ -58,9 +204,7 @@ class SearchResponse(BaseModel):
 def map_result(item: Dict[str, Any]) -> SearchResultItem:
     """Map internal search result to API response contract."""
     source = item.get("source", {})
-    file_path = source.get("file_path") or ""
-    normalized_file_path = file_path[2:] if file_path.startswith("./") else file_path
-    pdf_link = f"/{normalized_file_path}" if normalized_file_path and not normalized_file_path.startswith("/") else normalized_file_path
+    pdf_link = admin.pdf_link(source.get("file_path") or "")
 
     answer_text = (item.get("qa_answer") or "").strip() if item.get("qa_score", 0.0) >= ANSWER_MIN_SCORE else ""
 
@@ -77,9 +221,9 @@ def map_result(item: Dict[str, Any]) -> SearchResultItem:
 
 
 @app.get("/health")
-def health() -> Dict[str, str]:
+def health() -> Dict[str, Any]:
     """Lightweight health endpoint."""
-    return {"status": "ok"}
+    return {"status": "ok", "version": admin_api.VERSION, "admin_enabled": bool(settings.admin_token)}
 
 
 @app.post("/api/search", response_model=SearchResponse)
@@ -91,3 +235,8 @@ def api_search(payload: SearchRequest) -> SearchResponse:
         return SearchResponse(query=result.get("query", payload.query), results=mapped)
     except Exception as exc:  # pylint: disable=broad-except
         raise HTTPException(status_code=500, detail=f"Search execution failed: {exc}") from exc
+
+
+if settings.serve_frontend and os.path.isdir(FRONTEND_DIST):
+    # Added last so the API routes above take precedence.
+    app.mount("/", StaticFiles(directory=FRONTEND_DIST, html=True), name="frontend")

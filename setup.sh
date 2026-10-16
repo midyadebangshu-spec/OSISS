@@ -89,6 +89,13 @@ python "$PROJECT_ROOT/src/wait_for_services.py"
 echo "[OSISS] Initializing PostgreSQL schema and Elasticsearch index..."
 python "$PROJECT_ROOT/src/db_init.py"
 
+ENV_FILE="$PROJECT_ROOT/.env"
+if ! grep -qs '^ADMIN_TOKEN=' "$ENV_FILE"; then
+  echo "[OSISS] Generating ADMIN_TOKEN for the admin app into .env..."
+  touch "$ENV_FILE" && chmod 600 "$ENV_FILE"
+  echo "ADMIN_TOKEN=$(python -c 'import secrets; print(secrets.token_urlsafe(32))')" >> "$ENV_FILE"
+fi
+
 echo "[OSISS] Downloading and caching local models..."
 python "$PROJECT_ROOT/src/download_models.py"
 
@@ -97,3 +104,4 @@ echo "[OSISS] Next steps:"
 echo "  1) Add PDFs into data/pdfs/"
 echo "  2) Run ingestion: ./ingestion.sh --once"
 echo "  3) Run search: .venv/bin/python src/search.py --query \"Any question from the PDF\""
+echo "  4) Admin app: ./api.sh, then cd admin && npm install && npm run dev (token: ADMIN_TOKEN in .env)"

@@ -7,6 +7,7 @@ import json
 import os
 import re
 import sys
+import time
 from functools import lru_cache
 from typing import Callable, Dict, List, Optional, Tuple
 
@@ -482,10 +483,23 @@ def diversify_candidates(candidates: List[Dict], limit: int) -> List[Dict]:
     return mmr_select(candidates, limit, settings.mmr_lambda)
 
 
-def search_and_extract(query: str, top_k: int = 3) -> Dict:
-    """Full search pipeline from query embedding to extractive answer JSON."""
+def search_and_extract(query: str, top_k: int = 3, timings: Optional[Dict[str, float]] = None) -> Dict:
+    """Full search pipeline from query embedding to extractive answer JSON.
+
+    When `timings` is given it is filled with seconds per stage (load, retrieve, rerank, diversify, qa).
+    """
+    clock = time.perf_counter()
+
+    def lap(stage: str) -> None:
+        nonlocal clock
+        if timings is not None:
+            now = time.perf_counter()
+            timings[stage] = timings.get(stage, 0.0) + now - clock
+            clock = now
+
     es_client = get_es_client()
     embedder, qa_runner = get_models()
+    lap("load")
 
     query = normalize_query(query)
     window = max(top_k, settings.retrieval_candidates)
@@ -499,14 +513,19 @@ def search_and_extract(query: str, top_k: int = 3) -> Dict:
             [query] + [variant.text for variant in variants], normalize_embeddings=True, convert_to_numpy=True
         ).tolist()
         candidates = retrieve_romanized(es_client, query, vectors, variants, top_k=window)
+        lap("retrieve")
         candidates = rerank_candidates(query, candidates, variant_queries)
+        lap("rerank")
     else:
         query_embedding = embedder.encode([query], normalize_embeddings=True, convert_to_numpy=True)[0].tolist()
         candidates = retrieve_top_chunks(es_client, query, query_embedding, top_k=window)
+        lap("retrieve")
         candidates = rerank_candidates(query, candidates)
         if mode == "ambiguous":
             candidates, variant_queries = romanized_fallback(es_client, embedder, query, candidates, window)
+        lap("rerank")
     candidates = diversify_candidates(candidates, top_k + max(0, settings.qa_extra_candidates))
+    lap("diversify")
 
     if not candidates:
         return {
@@ -562,8 +581,11 @@ def search_and_extract(query: str, top_k: int = 3) -> Dict:
         )
 
     enriched_results.sort(key=final_score, reverse=True)
+    lap("qa")
     return {
         "query": query,
+        "mode": mode,
+        "variant_queries": variant_queries,
         "results": enriched_results[:top_k],
     }
 

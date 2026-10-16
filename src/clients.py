@@ -15,19 +15,24 @@ from elasticsearch import Elasticsearch
 from config import settings
 
 
+def postgres_params() -> dict:
+    """Connection keyword arguments for psycopg2."""
+    return {
+        "host": settings.postgres_host,
+        "port": settings.postgres_port,
+        "dbname": settings.postgres_db,
+        "user": settings.postgres_user,
+        "password": settings.postgres_password,
+    }
+
+
 def get_postgres_connection(max_retries: int = 10, retry_delay_seconds: int = 2):
     """Create and return a PostgreSQL connection with retry logic."""
     last_error: Optional[Exception] = None
 
     for attempt in range(1, max_retries + 1):
         try:
-            return psycopg2.connect(
-                host=settings.postgres_host,
-                port=settings.postgres_port,
-                dbname=settings.postgres_db,
-                user=settings.postgres_user,
-                password=settings.postgres_password,
-            )
+            return psycopg2.connect(**postgres_params())
         except Exception as exc:  # pylint: disable=broad-except
             last_error = exc
             if attempt < max_retries:

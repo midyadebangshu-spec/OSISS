@@ -15,7 +15,8 @@ import os
 import sys
 import time
 from collections import Counter
-from typing import Dict, List, Optional, Tuple
+from contextlib import contextmanager
+from typing import Callable, Dict, Iterator, List, Optional, Tuple
 
 from elasticsearch.helpers import bulk
 from sentence_transformers import SentenceTransformer
@@ -64,6 +65,64 @@ def fetch_ingested_books(connection) -> Dict[str, Tuple[int, Optional[str]]]:
         cursor.execute("SELECT file_path, id, file_hash FROM books")
         rows = cursor.fetchall()
     return {row[0]: (row[1], row[2]) for row in rows}
+
+
+# Key of the PostgreSQL advisory lock held while a book is added, re-ingested or deleted, so the polling ingester
+# (ingestion.sh or the API's worker) and admin uploads never work on the same file at once.
+INGEST_LOCK_KEY = 7_051_155
+
+METADATA_FIELDS = ("title", "author", "publication_year", "department")
+
+Log = Callable[[str], None]
+
+
+class IngestBusy(RuntimeError):
+    """The ingestion lock was not free within the requested time."""
+
+
+@contextmanager
+def ingest_lock(connection, timeout: Optional[float] = None) -> Iterator[None]:
+    """Hold the ingestion advisory lock (session level, so it spans the transactions inside).
+
+    Waits indefinitely by default; with `timeout` (seconds) raises IngestBusy instead of waiting longer.
+    """
+    deadline = None if timeout is None else time.monotonic() + timeout
+    while True:
+        with connection.cursor() as cursor:
+            if deadline is None:
+                cursor.execute("SELECT pg_advisory_lock(%s)", (INGEST_LOCK_KEY,))
+                acquired = True
+            else:
+                cursor.execute("SELECT pg_try_advisory_lock(%s)", (INGEST_LOCK_KEY,))
+                acquired = cursor.fetchone()[0]
+        connection.commit()
+        if acquired:
+            break
+        if time.monotonic() >= deadline:
+            raise IngestBusy("Ingestion is busy with another book; try again when it finishes.")
+        time.sleep(0.2)
+    try:
+        yield
+    finally:
+        connection.rollback()
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT pg_advisory_unlock(%s)", (INGEST_LOCK_KEY,))
+        connection.commit()
+
+
+def fetch_excluded_files(connection) -> set:
+    """Paths of PDFs whose book an admin deleted; the poller leaves them alone."""
+    with connection.cursor() as cursor:
+        cursor.execute("SELECT file_path FROM excluded_files")
+        return {row[0] for row in cursor.fetchall()}
+
+
+def fetch_book_metadata(connection, book_id: int) -> Dict:
+    """Title / author / year / department of a stored book."""
+    with connection.cursor() as cursor:
+        cursor.execute("SELECT title, author, publication_year, department FROM books WHERE id = %s", (book_id,))
+        row = cursor.fetchone()
+    return dict(zip(METADATA_FIELDS, row)) if row else {}
 
 
 def set_book_hash(connection, book_id: int, file_hash: str) -> None:
@@ -135,15 +194,19 @@ def process_pdf(
     es_client,
     embedder: SentenceTransformer,
     file_hash: str,
+    metadata: Optional[Dict] = None,
 ) -> Tuple[bool, str]:
     """Process a single PDF and index all extracted chunks.
+
+    `metadata` (title / author / publication_year / department) comes from the admin app or a previous
+    ingestion of the same file; without it the fields are guessed from the file name.
 
     Returns:
     - (True, message) on success.
     - (False, error_message) on failure.
     """
     try:
-        metadata = infer_metadata_from_filename(file_path)
+        metadata = dict(metadata) if metadata else infer_metadata_from_filename(file_path)
         pages = extract_pdf_pages(file_path)
         if not pages:
             return False, f"No readable text found in '{file_path}'."
@@ -214,6 +277,77 @@ def process_pdf(
         return False, f"Failed to process '{file_path}': {exc}"
 
 
+def plan_for_path(connection, path: str, file_hash: str) -> Tuple[str, Optional[int]]:
+    """What a scan should do with a PDF: "new", "changed" (book id), "backfill" (book id) or "skip"."""
+    with connection.cursor() as cursor:
+        cursor.execute("SELECT 1 FROM excluded_files WHERE file_path = %s", (path,))
+        if cursor.fetchone():
+            return "skip", None
+        cursor.execute("SELECT id, file_hash FROM books WHERE file_path = %s", (path,))
+        row = cursor.fetchone()
+    if row is None:
+        return "new", None
+    book_id, stored_hash = row
+    if stored_hash is None:
+        return "backfill", book_id
+    return ("changed", book_id) if stored_hash != file_hash else ("skip", book_id)
+
+
+def ingest_path(connection, es_client, embedder, path: str, log: Log = print) -> bool:
+    """Ingest one PDF from the source directory if it is new or changed (under the ingestion lock).
+
+    A changed file keeps the metadata of its previous ingestion. Returns True when a book was (re)ingested.
+    """
+    with ingest_lock(connection):
+        file_hash = compute_file_hash(path)
+        action, book_id = plan_for_path(connection, path, file_hash)
+        connection.rollback()
+        if action == "skip":
+            return False
+        if action == "backfill":
+            with connection:
+                set_book_hash(connection, book_id, file_hash)
+            return False
+
+        metadata = None
+        if action == "changed":
+            log(f"[OSISS] Content changed for '{path}'; re-ingesting.")
+            metadata = fetch_book_metadata(connection, book_id)
+            connection.rollback()
+            delete_book(connection, es_client, book_id)
+
+        ok, message = process_pdf(path, connection, es_client, embedder, file_hash, metadata=metadata)
+        log(f"[OSISS] {message}" if ok else f"[OSISS] ERROR: {message}")
+        return ok
+
+
+def scan_once(connection, es_client, embedder, only: Optional[List[str]] = None, log: Log = print) -> int:
+    """One pass over the PDF directory; returns how many books were (re)ingested.
+
+    The cheap pre-check runs without the lock; each candidate is re-checked under it in `ingest_path`.
+    """
+    with connection:
+        known_books = fetch_ingested_books(connection)
+        excluded = fetch_excluded_files(connection)
+
+    candidates: List[str] = []
+    for path in list_pdf_files(settings.pdf_dir):
+        if only and not any(part.lower() in os.path.basename(path).lower() for part in only):
+            continue
+        if path in excluded:
+            continue
+        known = known_books.get(path)
+        if known is None or known[1] is None or known[1] != compute_file_hash(path):
+            candidates.append(path)
+
+    if not candidates:
+        log("[OSISS] No new or changed PDFs found.")
+        return 0
+
+    log(f"[OSISS] Found {len(candidates)} new or changed PDF(s).")
+    return sum(1 for path in candidates if ingest_path(connection, es_client, embedder, path, log))
+
+
 def run_ingestion_loop(once: bool, only: Optional[List[str]] = None) -> int:
     """Run ingestion either once or continuously in watch mode.
 
@@ -234,43 +368,9 @@ def run_ingestion_loop(once: bool, only: Optional[List[str]] = None) -> int:
 
     try:
         while True:
-            with connection:
-                known_books = fetch_ingested_books(connection)
-
-            new_files: List[Tuple[str, str]] = []
-            for path in list_pdf_files(settings.pdf_dir):
-                if only and not any(part.lower() in os.path.basename(path).lower() for part in only):
-                    continue
-                file_hash = compute_file_hash(path)
-                known = known_books.get(path)
-                if known is None:
-                    new_files.append((path, file_hash))
-                    continue
-
-                book_id, stored_hash = known
-                if stored_hash is None:
-                    with connection:
-                        set_book_hash(connection, book_id, file_hash)
-                elif stored_hash != file_hash:
-                    print(f"[OSISS] Content changed for '{path}'; re-ingesting.")
-                    delete_book(connection, es_client, book_id)
-                    new_files.append((path, file_hash))
-
-            if not new_files:
-                print("[OSISS] No new or changed PDFs found.")
-            else:
-                print(f"[OSISS] Found {len(new_files)} new or changed PDF(s).")
-
-            for pdf_path, file_hash in new_files:
-                ok, message = process_pdf(pdf_path, connection, es_client, embedder, file_hash)
-                if ok:
-                    print(f"[OSISS] {message}")
-                else:
-                    print(f"[OSISS] ERROR: {message}", file=sys.stderr)
-
+            scan_once(connection, es_client, embedder, only)
             if once:
                 break
-
             time.sleep(settings.polling_interval_seconds)
 
         return 0

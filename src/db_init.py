@@ -39,6 +39,27 @@ ALTER TABLE chunks ADD COLUMN IF NOT EXISTS is_exercise BOOLEAN NOT NULL DEFAULT
 
 CREATE INDEX IF NOT EXISTS idx_chunks_book_id ON chunks(book_id);
 CREATE INDEX IF NOT EXISTS idx_chunks_page_number ON chunks(page_number);
+
+-- PDFs whose book an admin deleted: the file stays on disk but is not ingested again until restored.
+-- `metadata` keeps the deleted book's title/author/year/department for the restore.
+CREATE TABLE IF NOT EXISTS excluded_files (
+    file_path TEXT PRIMARY KEY,
+    file_hash TEXT,
+    metadata JSONB,
+    deleted_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- API keys handed to apps that call /api/search. Only a SHA-256 of each key is stored.
+CREATE TABLE IF NOT EXISTS api_clients (
+    id SERIAL PRIMARY KEY,
+    name TEXT NOT NULL,
+    key_prefix TEXT NOT NULL,
+    key_hash TEXT NOT NULL UNIQUE,
+    enabled BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    last_used_at TIMESTAMPTZ,
+    request_count BIGINT NOT NULL DEFAULT 0
+);
 """
 
 

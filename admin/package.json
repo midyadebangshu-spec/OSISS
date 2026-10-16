@@ -1,0 +1,72 @@
+{
+  "name": "osiss-admin",
+  "productName": "OSISS Admin",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Desktop admin app for the OSISS search server",
+  "homepage": "https://github.com/midyadebangshu-spec/OSISS",
+  "author": "OSISS contributors",
+  "main": "dist-electron/main.cjs",
+  "scripts": {
+    "dev": "node scripts/dev.mjs",
+    "build": "tsc -b && vite build && node scripts/build-electron.mjs",
+    "start": "electron .",
+    "lint": "eslint .",
+    "typecheck": "tsc -b",
+    "dist": "npm run build && electron-builder --publish never --linux",
+    "dist:win": "npm run build && electron-builder --publish never --win",
+    "dist:mac": "npm run build && electron-builder --publish never --mac",
+    "test": "node --experimental-strip-types --test electron/*.test.ts"
+  },
+  "build": {
+    "appId": "edu.osiss.admin",
+    "productName": "OSISS Admin",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**",
+      "dist-electron/**",
+      "package.json"
+    ],
+    "linux": {
+      "target": [
+        "AppImage",
+        "deb"
+      ],
+      "category": "Utility",
+      "maintainer": "OSISS contributors"
+    },
+    "win": {
+      "target": "nsis"
+    },
+    "mac": {
+      "target": "dmg"
+    },
+    "publish": null
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.39.5",
+    "@types/node": "^24.19.2",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@vitejs/plugin-react": "^6.1.2",
+    "autoprefixer": "^10.6.1",
+    "electron": "^44.8.0",
+    "electron-builder": "^26.15.3",
+    "esbuild": "^0.28.2",
+    "eslint": "^9.39.5",
+    "eslint-plugin-react-hooks": "^7.1.1",
+    "eslint-plugin-react-refresh": "^0.5.7",
+    "globals": "^17.13.0",
+    "lucide-react": "^1.58.0",
+    "postcss": "^8.5.30",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
+    "tailwindcss": "^3.4.17",
+    "typescript": "~6.0.2",
+    "typescript-eslint": "^8.71.2",
+    "vite": "^8.3.4"
+  }
+}

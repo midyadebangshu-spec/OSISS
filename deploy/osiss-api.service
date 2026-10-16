@@ -1,0 +1,31 @@
+# systemd unit: starts the OSISS API at boot and restarts it if it stops.
+#
+# Install (adjust User and the /opt/OSISS paths to where the repository lives):
+#   sudo cp deploy/osiss-api.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now osiss-api
+#   journalctl -u osiss-api -f        # logs
+#
+# Postgres and Elasticsearch run in Docker with `restart: unless-stopped`, so they come back when Docker starts.
+# ADMIN_TOKEN and other settings are read from /opt/OSISS/.env by api.sh; Environment= lines below win over it.
+# While this service runs, start and stop the API with systemctl, not from the admin app's Dashboard.
+
+[Unit]
+Description=OSISS search API
+Wants=network-online.target docker.service
+After=network-online.target docker.service
+
+[Service]
+Type=simple
+User=osiss
+WorkingDirectory=/opt/OSISS
+ExecStart=/opt/OSISS/api.sh
+# Only reachable through the reverse proxy on this machine. Use 0.0.0.0 for a campus-network server without a proxy.
+Environment=API_HOST=127.0.0.1
+Environment=SERVE_FRONTEND=true
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=30
+
+[Install]
+WantedBy=multi-user.target

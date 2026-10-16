@@ -7,6 +7,7 @@ import json
 import os
 import re
 import sys
+import time
 from functools import lru_cache
 from typing import Callable, Dict, List, Optional, Tuple
 
@@ -54,8 +55,14 @@ def resolve_runtime_devices() -> tuple[str, int]:
     return "cpu", -1
 
 
+def use_half_precision(device: str) -> bool:
+    """MODEL_PRECISION fp16 / auto on a GPU; the CPU always runs fp32 (fp16 is slow or unsupported there)."""
+    return device.startswith("cuda") and settings.model_precision in {"fp16", "auto"}
+
+
 def build_qa_runner(qa_device: int) -> Callable[[str, str], Dict]:
     """Build an extractive QA runner compatible with different Transformers versions."""
+    half = use_half_precision("cuda" if qa_device == 0 else "cpu")
     try:
         qa_pipeline = pipeline(
             "question-answering",
@@ -63,6 +70,7 @@ def build_qa_runner(qa_device: int) -> Callable[[str, str], Dict]:
             tokenizer=settings.qa_model_path,
             device=qa_device,
             local_files_only=True,
+            **({"torch_dtype": torch.float16} if half else {}),
         )
 
         def run_with_pipeline(question: str, context: str) -> Dict:
@@ -86,6 +94,8 @@ def build_qa_runner(qa_device: int) -> Callable[[str, str], Dict]:
 
     model = AutoModelForQuestionAnswering.from_pretrained(settings.qa_model_path, local_files_only=True)
     model.to(device)
+    if half:
+        model.half()
     model.eval()
     return make_windowed_qa_runner(tokenizer, model, device)
 
@@ -391,6 +401,8 @@ def get_models() -> Tuple[SentenceTransformer, Callable[[str, str], Dict]]:
     embedder_device, qa_device = resolve_runtime_devices()
     print(f"[OSISS] Retriever device: {embedder_device} | QA device: {'cuda:0' if qa_device == 0 else 'cpu'}")
     embedder = SentenceTransformer(settings.bge_model_path, device=embedder_device, local_files_only=True)
+    if use_half_precision(embedder_device):
+        embedder.half()
     return embedder, build_qa_runner(qa_device)
 
 
@@ -412,7 +424,10 @@ def get_reranker() -> Optional[CrossEncoder]:
         print(f"[OSISS] Reranker not found at '{settings.reranker_model_path}'; skipping reranking.")
         return None
     device, _ = resolve_runtime_devices()
-    return CrossEncoder(settings.reranker_model_path, device=device, local_files_only=True)
+    reranker = CrossEncoder(settings.reranker_model_path, device=device, local_files_only=True)
+    if use_half_precision(device):
+        reranker.half()
+    return reranker
 
 
 def rerank_candidates(
@@ -429,7 +444,7 @@ def rerank_candidates(
     pairs = [
         (query_for_candidate(item, query, variant_queries), item["source"].get("text", "")) for item in candidates
     ]
-    scores = reranker.predict(pairs, batch_size=8, show_progress_bar=False)
+    scores = reranker.predict(pairs, batch_size=max(1, settings.rerank_batch_size), show_progress_bar=False)
     for item, (scored_query, _), score in zip(candidates, pairs, scores):
         item["rerank_score"] = float(score)
         item["scored_query"] = scored_query
@@ -482,10 +497,23 @@ def diversify_candidates(candidates: List[Dict], limit: int) -> List[Dict]:
     return mmr_select(candidates, limit, settings.mmr_lambda)
 
 
-def search_and_extract(query: str, top_k: int = 3) -> Dict:
-    """Full search pipeline from query embedding to extractive answer JSON."""
+def search_and_extract(query: str, top_k: int = 3, timings: Optional[Dict[str, float]] = None) -> Dict:
+    """Full search pipeline from query embedding to extractive answer JSON.
+
+    When `timings` is given it is filled with seconds per stage (load, retrieve, rerank, diversify, qa).
+    """
+    clock = time.perf_counter()
+
+    def lap(stage: str) -> None:
+        nonlocal clock
+        if timings is not None:
+            now = time.perf_counter()
+            timings[stage] = timings.get(stage, 0.0) + now - clock
+            clock = now
+
     es_client = get_es_client()
     embedder, qa_runner = get_models()
+    lap("load")
 
     query = normalize_query(query)
     window = max(top_k, settings.retrieval_candidates)
@@ -499,14 +527,19 @@ def search_and_extract(query: str, top_k: int = 3) -> Dict:
             [query] + [variant.text for variant in variants], normalize_embeddings=True, convert_to_numpy=True
         ).tolist()
         candidates = retrieve_romanized(es_client, query, vectors, variants, top_k=window)
+        lap("retrieve")
         candidates = rerank_candidates(query, candidates, variant_queries)
+        lap("rerank")
     else:
         query_embedding = embedder.encode([query], normalize_embeddings=True, convert_to_numpy=True)[0].tolist()
         candidates = retrieve_top_chunks(es_client, query, query_embedding, top_k=window)
+        lap("retrieve")
         candidates = rerank_candidates(query, candidates)
         if mode == "ambiguous":
             candidates, variant_queries = romanized_fallback(es_client, embedder, query, candidates, window)
+        lap("rerank")
     candidates = diversify_candidates(candidates, top_k + max(0, settings.qa_extra_candidates))
+    lap("diversify")
 
     if not candidates:
         return {
@@ -562,8 +595,11 @@ def search_and_extract(query: str, top_k: int = 3) -> Dict:
         )
 
     enriched_results.sort(key=final_score, reverse=True)
+    lap("qa")
     return {
         "query": query,
+        "mode": mode,
+        "variant_queries": variant_queries,
         "results": enriched_results[:top_k],
     }
 

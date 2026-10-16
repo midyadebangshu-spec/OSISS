@@ -21,6 +21,8 @@ venv/
 # Local data and model artifacts
 data/pdfs/*
 !data/pdfs/.gitkeep
+data/uploads/
+data/admin/
 models/*
 !models/.gitkeep
 
@@ -31,6 +33,10 @@ models/*
 # Frontend (Vite/Node)
 frontend/node_modules/
 frontend/dist/
+admin/node_modules/
+admin/dist/
+admin/dist-electron/
+admin/release/
 
 # Local env files
 .env

@@ -69,7 +69,8 @@ def start_admin_worker() -> None:
         embedder=lambda: search.get_models()[0],
         on_corpus_change=load_control.cache.invalidate,
     )
-    worker.start(polling=bool(runtime_config.get_state("ingester_polling", False)))
+    # Every copy can queue and show jobs; only copies with INGEST_WORKER=true run them.
+    worker.start(polling=bool(runtime_config.get_state("ingester_polling", False)), run_worker=settings.ingest_worker)
     admin_api.context.worker = worker
 
 

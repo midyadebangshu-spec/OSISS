@@ -11,7 +11,6 @@ Jobs and the log live in memory and are lost on restart; the polling switch is p
 from __future__ import annotations
 
 import io
-import itertools
 import os
 import shutil
 import subprocess
@@ -20,11 +19,11 @@ import threading
 import time
 import traceback
 import uuid
-from collections import deque
-from dataclasses import asdict, dataclass, field
-from typing import Any, Callable, Deque, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 from config import settings
+from job_store import Job, MemoryJobStore, PostgresJobStore  # noqa: F401  (Job is re-exported)
+from replica import replica_id
 
 SRC_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_ROOT = os.path.dirname(SRC_DIR)
@@ -35,27 +34,6 @@ MAINTENANCE = {
     "reindex": ("reindex_es.py", []),
     "backfill-exercises": ("backfill_exercise_flags.py", []),
 }
-
-
-@dataclass
-class Job:
-    """One unit of work for the worker thread."""
-
-    id: str
-    kind: str  # upload | reingest | restore | scan | maintenance
-    label: str
-    status: str = "queued"  # queued | running | done | failed | cancelled
-    message: str = ""
-    created_at: float = field(default_factory=time.time)
-    started_at: Optional[float] = None
-    finished_at: Optional[float] = None
-    book_id: Optional[int] = None
-    params: Dict[str, Any] = field(default_factory=dict, repr=False)
-
-    def public(self) -> Dict[str, Any]:
-        data = asdict(self)
-        data.pop("params")
-        return data
 
 
 class _ThreadTee(io.TextIOBase):
@@ -84,7 +62,11 @@ class _ThreadTee(io.TextIOBase):
 
 
 class IngestWorker:
-    """Single background thread processing a FIFO of jobs."""
+    """Queue front-end for the admin API plus, when enabled, the thread that runs the jobs.
+
+    Every API copy has one, so any copy can queue jobs and show their status; only copies started with
+    `run_worker=True` (INGEST_WORKER=true) execute them.
+    """
 
     def __init__(
         self,
@@ -93,31 +75,31 @@ class IngestWorker:
         embedder: Callable[[], Any],
         log_size: int = 2000,
         on_corpus_change: Optional[Callable[[], None]] = None,
+        store=None,
+        worker_id: Optional[str] = None,
     ):
         self._connect, self._es_client, self._embedder = connect, es_client, embedder
         # Called after a job that may have added, changed or removed books (e.g. to clear the answer cache).
         self._on_corpus_change = on_corpus_change
+        if store is None:
+            store = PostgresJobStore() if settings.state_backend == "postgres" else MemoryJobStore(log_size)
+        self.store = store
+        self.worker_id = worker_id or replica_id()
         self._connection = None
-        self._lock = threading.Lock()
         self._wake = threading.Event()
         self._stop = threading.Event()
-        self._queue: Deque[str] = deque()
-        self._jobs: Dict[str, Job] = {}
-        self._order: Deque[str] = deque(maxlen=200)
-        self._log: Deque[Dict[str, Any]] = deque(maxlen=log_size)
-        self._seq = itertools.count(1)
         self._thread: Optional[threading.Thread] = None
         self._thread_ident: Optional[int] = None
-        self._current: Optional[str] = None
+        self.run_worker = False
         self.polling = False
         self._next_scan = 0.0
-        self.last_scan_at: Optional[float] = None
 
     # --- lifecycle ----------------------------------------------------------------------------------------------
 
-    def start(self, polling: bool = False) -> None:
+    def start(self, polling: bool = False, run_worker: bool = True) -> None:
         self.polling = polling
-        if self._thread and self._thread.is_alive():
+        self.run_worker = run_worker
+        if not run_worker or (self._thread and self._thread.is_alive()):
             return
         self._stop.clear()
         if not isinstance(sys.stdout, _ThreadTee):
@@ -146,86 +128,91 @@ class IngestWorker:
 
     def submit(self, kind: str, label: str, book_id: Optional[int] = None, **params) -> Job:
         job = Job(id=uuid.uuid4().hex[:12], kind=kind, label=label, book_id=book_id, params=params)
-        with self._lock:
-            self._jobs[job.id] = job
-            if len(self._order) == self._order.maxlen:
-                self._jobs.pop(self._order[0], None)
-            self._order.append(job.id)
-            self._queue.append(job.id)
+        self.store.add(job)
         self.log(f"[OSISS] Queued: {label}")
         self._wake.set()
         return job
 
     def cancel(self, job_id: str) -> Job:
-        with self._lock:
-            job = self._jobs.get(job_id)
-            if job is None:
-                raise KeyError(job_id)
-            if job.status == "queued":
-                self._queue.remove(job_id)
-                job.status, job.finished_at, job.message = "cancelled", time.time(), "Cancelled before it started."
-                self._cleanup(job)
+        job = self.store.cancel(job_id)
+        if job.status == "cancelled":
+            self._cleanup(job)
         return job
 
     def get(self, job_id: str) -> Job:
-        with self._lock:
-            return self._jobs[job_id]
+        return self.store.get(job_id)
 
     def jobs(self) -> List[Dict[str, Any]]:
-        with self._lock:
-            return [self._jobs[job_id].public() for job_id in reversed(self._order) if job_id in self._jobs]
+        return [job.public() for job in self.store.list()]
 
     def has_pending(self, kind: str) -> bool:
-        with self._lock:
-            return any(self._jobs[job_id].kind == kind for job_id in self._queue)
+        return self.store.has_pending(kind)
 
     def state(self) -> Dict[str, Any]:
-        with self._lock:
-            queued = len(self._queue)
-            current = self._jobs[self._current].public() if self._current else None
+        running = self.store.running()
         return {
             "running": bool(self._thread and self._thread.is_alive()),
+            "worker_here": self.run_worker,
+            "worker_id": self.worker_id,
             "polling": self.polling,
             "poll_interval_seconds": settings.polling_interval_seconds,
-            "last_scan_at": self.last_scan_at,
-            "queued": queued,
-            "current": current,
+            "last_scan_at": self.store.last_finished("scan"),
+            "queued": self.store.queued_count(),
+            "current": running[0].public() if running else None,
+            "running_jobs": [job.public() for job in running],
         }
 
     # --- log ------------------------------------------------------------------------------------------------------
 
     def log(self, message: str, echo: bool = True) -> None:
-        entry = {"seq": next(self._seq), "time": time.time(), "message": message}
-        with self._lock:
-            self._log.append(entry)
+        try:
+            self.store.log(message, self.worker_id)
+        except Exception as exc:  # pylint: disable=broad-except
+            echo = True
+            message = f"{message}  (not logged: {exc})"
         if echo:
             target = sys.stdout._target if isinstance(sys.stdout, _ThreadTee) else sys.stdout
             print(message, file=target, flush=True)
 
     def logs_since(self, seq: int = 0, limit: int = 500) -> Dict[str, Any]:
-        with self._lock:
-            entries = [entry for entry in self._log if entry["seq"] > seq]
-        entries = entries[-limit:]
+        entries = self.store.logs_since(seq, limit)
         return {"entries": entries, "last_seq": entries[-1]["seq"] if entries else seq}
 
     # --- worker loop ----------------------------------------------------------------------------------------------
 
     def _run(self) -> None:
         self._thread_ident = threading.get_ident()
+        try:
+            stale_before = time.time() - 3 * settings.replica_heartbeat_seconds
+            failed = self.store.fail_interrupted(self.worker_id, stale_before)
+            if failed:
+                self.log(f"[OSISS] Marked {failed} job(s) interrupted by a stopped worker as failed.")
+        except Exception as exc:  # pylint: disable=broad-except
+            self.log(f"[OSISS] Could not check for interrupted jobs: {exc}")
         while not self._stop.is_set():
-            if self.polling and time.time() >= self._next_scan and not self.has_pending("scan"):
-                self.submit("scan", "Scan PDF directory")
-                self._next_scan = time.time() + settings.polling_interval_seconds
-            with self._lock:
-                job_id = self._queue.popleft() if self._queue else None
-                self._current = job_id
-            if job_id is None:
+            try:
+                job = self._next_job()
+            except Exception as exc:  # pylint: disable=broad-except
+                # e.g. the database is restarting: keep the worker alive and try again shortly.
+                self.log(f"[OSISS] Job queue unavailable: {exc}")
+                self._stop.wait(5)
+                continue
+            if job is None:
                 self._wake.wait(timeout=1.0)
                 self._wake.clear()
                 continue
-            self._execute(self._jobs[job_id])
-            with self._lock:
-                self._current = None
+            self._execute(job)
+
+    def _next_job(self) -> Optional[Job]:
+        if settings.state_backend == "postgres":
+            import runtime_config  # pylint: disable=import-outside-toplevel
+
+            # Polling may have been switched on or off through another API copy.
+            self.polling = bool(runtime_config.get_state("ingester_polling", self.polling))
+        if self.polling and time.time() >= self._next_scan and not self.store.has_pending("scan"):
+            self.submit("scan", "Scan PDF directory")
+            self._next_scan = time.time() + settings.polling_interval_seconds
+        return self.store.claim(self.worker_id)
 
     def _db(self):
         if self._connection is None or self._connection.closed:
@@ -233,7 +220,6 @@ class IngestWorker:
         return self._connection
 
     def _execute(self, job: Job) -> None:
-        job.status, job.started_at = "running", time.time()
         self.log(f"[OSISS] Started: {job.label}")
         try:
             handler = getattr(self, f"_job_{job.kind}")
@@ -252,6 +238,10 @@ class IngestWorker:
         finally:
             job.finished_at = time.time()
             self._cleanup(job)
+            try:
+                self.store.save(job)
+            except Exception as exc:  # pylint: disable=broad-except
+                self.log(f"[OSISS] Could not record the result of '{job.label}': {exc}")
             # A failed re-ingest may already have removed the book, so non-scan jobs count as changes either way.
             if self._on_corpus_change and (job.kind != "scan" or job.params.get("ingested")):
                 self._on_corpus_change()
@@ -269,7 +259,6 @@ class IngestWorker:
 
         count = ingest.scan_once(self._db(), self._es_client(), self._embedder(), log=self.log)
         job.params["ingested"] = count
-        self.last_scan_at = time.time()
         return f"{count} book(s) ingested."
 
     def _job_upload(self, job: Job) -> str:

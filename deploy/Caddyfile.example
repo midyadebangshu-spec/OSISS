@@ -1,0 +1,22 @@
+# Caddy config for serving OSISS on a public domain with automatic HTTPS (Let's Encrypt).
+#
+# 1. Replace ossis.example.com with your domain. Its DNS A (and AAAA) record must point to this server,
+#    and ports 80 and 443 must be open, for Caddy to obtain the certificate.
+# 2. Copy to /etc/caddy/Caddyfile and run: sudo systemctl reload caddy
+#
+# The OSISS API must listen on 127.0.0.1:8000 only (API_HOST=127.0.0.1, as in deploy/osiss-api.service),
+# so that everything from the internet goes through Caddy.
+
+ossis.example.com {
+	encode gzip
+
+	# The admin API is protected by ADMIN_TOKEN and its lockout, but it does not need to be on the internet.
+	# Allow it only from the addresses the admin app runs on (edit the IP), or remove this block to allow all.
+	@admin_from_elsewhere {
+		path /api/admin/*
+		not remote_ip 203.0.113.10
+	}
+	respond @admin_from_elsewhere "Forbidden" 403
+
+	reverse_proxy 127.0.0.1:8000
+}

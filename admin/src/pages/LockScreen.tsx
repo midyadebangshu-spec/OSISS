@@ -1,4 +1,4 @@
-import { KeyRound, Lock, ShieldCheck } from 'lucide-react'
+import { KeyRound, Lock } from 'lucide-react'
 import { useEffect, useState, type FormEvent, type ReactNode } from 'react'
 
 import type { VaultStatus } from '../../shared/types.ts'
@@ -21,16 +21,11 @@ function useCountdown(until: number) {
 
 function Frame({ children }: { children: ReactNode }) {
   return (
-    <div className="flex min-h-screen items-center justify-center bg-gradient-to-br from-slate-100 to-indigo-50 p-6">
+    <div className="flex min-h-screen items-center justify-center bg-gradient-to-br from-slate-100 to-neutral-200 p-6">
       <div className="w-full max-w-md rounded-xl border border-slate-200 bg-white p-8 shadow-lg">
-        <div className="mb-6 flex items-center gap-3">
-          <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-indigo-600 text-white">
-            <ShieldCheck className="h-5 w-5" />
-          </div>
-          <div>
-            <div className="text-lg font-semibold">OSISS Admin</div>
-            <div className="text-xs text-slate-500">Server control for the OSISS search engine</div>
-          </div>
+        <div className="mb-6">
+          <div className="text-lg font-semibold tracking-tight text-black">OSISS Admin</div>
+          <div className="text-xs text-slate-500">Server control for the OSISS search engine</div>
         </div>
         {children}
       </div>
@@ -72,7 +67,7 @@ function Setup({ onDone }: { onDone: () => void }) {
     <Frame>
       <h1 className="mb-2 text-base font-semibold">Your passkey</h1>
       <p className="mb-3 text-sm text-slate-600">Write it down and keep it somewhere safe. It is shown only once.</p>
-      <div className="mb-4 rounded-lg border-2 border-dashed border-indigo-300 bg-indigo-50 py-4 text-center font-mono text-3xl font-bold tracking-[0.3em] text-indigo-800" data-testid="new-passkey">
+      <div className="mb-4 rounded-lg border-2 border-dashed border-neutral-400 bg-neutral-100 py-4 text-center font-mono text-3xl font-bold tracking-[0.3em] text-black" data-testid="new-passkey">
         {formatCode(code)}
       </div>
       <form onSubmit={confirm} className="space-y-3">

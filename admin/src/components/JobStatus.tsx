@@ -7,7 +7,7 @@ import type { Job } from '../lib/types.ts'
 export function JobBadge({ status }: { status: Job['status'] }) {
   const styles: Record<Job['status'], string> = {
     queued: 'text-slate-600',
-    running: 'text-indigo-700',
+    running: 'text-black',
     done: 'text-emerald-700',
     failed: 'text-rose-700',
     cancelled: 'text-slate-400',

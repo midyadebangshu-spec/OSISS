@@ -152,7 +152,13 @@ export function Servers({
   onChanged: (selectId?: string) => void
   onSelect: (id: string) => void
 }) {
-  const [editing, setEditing] = useState<Draft | null>(profiles.length ? null : EMPTY_LOCAL)
+  const [editing, setEditingDraft] = useState<Draft | null>(profiles.length ? null : EMPTY_LOCAL)
+  // Every opened form gets a fresh key, so a new form never keeps the state (and saved id) of the previous one.
+  const [formKey, setFormKey] = useState(0)
+  const setEditing = (draft: Draft | null) => {
+    setFormKey((current) => current + 1)
+    setEditingDraft(draft)
+  }
   const [removing, setRemoving] = useState<Profile | null>(null)
 
   return (
@@ -169,7 +175,7 @@ export function Servers({
       {!profiles.length && !editing && <Alert tone="amber">Add a server to get started.</Alert>}
       {editing && (
         <ProfileForm
-          key={editing.id ?? 'new'}
+          key={formKey}
           initial={editing}
           onSaved={(id) => {
             setEditing(null)
@@ -189,7 +195,7 @@ export function Servers({
             title={
               <span className="flex items-center gap-2">
                 {profile.name}
-                {profile.id === activeId && <Badge tone="indigo">Active</Badge>}
+                {profile.id === activeId && <Badge tone="dark">Active</Badge>}
               </span>
             }
             actions={

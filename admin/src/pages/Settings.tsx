@@ -81,7 +81,7 @@ export function SettingsPage() {
                     <div className="min-w-0">
                       <div className="text-sm font-medium">
                         {field.label}
-                        {field.name in changes && <span className="ml-2 text-xs text-indigo-600">changed</span>}
+                        {field.name in changes && <span className="ml-2 text-xs text-neutral-900">changed</span>}
                       </div>
                       <div className="text-xs text-slate-500">
                         <code>{field.env}</code>

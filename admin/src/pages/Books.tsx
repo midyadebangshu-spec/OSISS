@@ -344,7 +344,7 @@ export function Books() {
             key={key}
             type="button"
             onClick={() => setTab(key)}
-            className={`-mb-px border-b-2 px-4 py-2 text-sm ${tab === key ? 'border-indigo-600 font-medium text-indigo-700' : 'border-transparent text-slate-500 hover:text-slate-700'}`}
+            className={`-mb-px border-b-2 px-4 py-2 text-sm ${tab === key ? 'border-black font-medium text-black' : 'border-transparent text-slate-500 hover:text-slate-700'}`}
           >
             {key === 'books' ? `Books${list ? ` (${list.length})` : ''}` : 'Deleted'}
           </button>
@@ -383,7 +383,7 @@ export function Books() {
                 </thead>
                 <tbody>
                   {visible.map((book) => (
-                    <tr key={book.id} className="cursor-pointer border-b border-slate-100 hover:bg-indigo-50/50" onClick={() => setEditing(book)}>
+                    <tr key={book.id} className="cursor-pointer border-b border-slate-100 hover:bg-neutral-100" onClick={() => setEditing(book)}>
                       <td className="py-2 pr-3">
                         <div className="flex items-center gap-2 font-medium">
                           {book.title}

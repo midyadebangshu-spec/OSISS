@@ -64,4 +64,6 @@ Needs Postgres/ES running and the PDFs in `data/pdfs/` ingested (PDFs, `models/`
 
 `admin/` is the Electron app (own `package.json`): `npm run dev`, `npm test` (node:test on `electron/*.test.ts`), `npm run lint`, `npm run build`, `npm run dist`. The renderer has no Node access and never sees tokens; all server calls go through `electron/main.ts` (only `/health` and `/api/admin/*`). The vault (`electron/vault.ts`) has no Electron imports so it is testable in plain Node.
 
+`deploy/` holds the public-deployment files (`Caddyfile.example`, `osiss-api.service`); `api.sh` honours `API_HOST`/`API_PORT`, and docker-compose publishes Postgres/ES on 127.0.0.1 only. README section 11 is the step-by-step admin guide; its screenshots live in `docs/images/admin/`.
+
 `.mcp.json` (code-review-graph, local paths) and `.code-review-graph/` are gitignored.

@@ -1,10 +1,11 @@
 import { AlertTriangle, CheckCircle2, Loader2, X } from 'lucide-react'
 import { useEffect, type ButtonHTMLAttributes, type InputHTMLAttributes, type ReactNode } from 'react'
+import { createPortal } from 'react-dom'
 
 type Variant = 'primary' | 'secondary' | 'danger' | 'ghost'
 
 const VARIANTS: Record<Variant, string> = {
-  primary: 'bg-indigo-600 text-white hover:bg-indigo-700 disabled:bg-indigo-300',
+  primary: 'bg-black text-white hover:bg-neutral-800 disabled:bg-neutral-400',
   secondary: 'border border-slate-300 bg-white text-slate-800 hover:bg-slate-50 disabled:text-slate-400',
   danger: 'bg-rose-600 text-white hover:bg-rose-700 disabled:bg-rose-300',
   ghost: 'text-slate-600 hover:bg-slate-100 disabled:text-slate-300',
@@ -50,7 +51,7 @@ const BADGE_TONES = {
   red: 'bg-rose-50 text-rose-700 ring-rose-200',
   amber: 'bg-amber-50 text-amber-800 ring-amber-200',
   slate: 'bg-slate-100 text-slate-700 ring-slate-200',
-  indigo: 'bg-indigo-50 text-indigo-700 ring-indigo-200',
+  dark: 'bg-neutral-900 text-white ring-neutral-900',
 }
 
 export type Tone = keyof typeof BADGE_TONES
@@ -73,7 +74,7 @@ export function Input(props: InputHTMLAttributes<HTMLInputElement>) {
   return (
     <input
       {...props}
-      className={`w-full rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm shadow-sm outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100 disabled:bg-slate-100 ${props.className ?? ''}`}
+      className={`w-full rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm shadow-sm outline-none focus:border-black focus:ring-2 focus:ring-neutral-200 disabled:bg-slate-100 ${props.className ?? ''}`}
     />
   )
 }
@@ -131,7 +132,8 @@ export function Modal({
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
   }, [onClose])
-  return (
+  // Portalled to <body>: inside a `space-y-*` parent the overlay would otherwise get a top margin and leave a gap.
+  return createPortal(
     <div className="fixed inset-0 z-40 flex items-center justify-center bg-slate-900/40 p-4" role="dialog" aria-modal="true" aria-label={title}>
       <div className={`flex max-h-full w-full flex-col rounded-lg bg-white shadow-xl ${wide ? 'max-w-3xl' : 'max-w-lg'}`}>
         <header className="flex items-center justify-between border-b border-slate-100 px-5 py-3">
@@ -145,7 +147,8 @@ export function Modal({
         <div className="overflow-y-auto px-5 py-4">{children}</div>
         {footer && <footer className="flex justify-end gap-2 border-t border-slate-100 px-5 py-3">{footer}</footer>}
       </div>
-    </div>
+    </div>,
+    document.body,
   )
 }
 
@@ -179,7 +182,7 @@ export function Toggle({ checked, onChange, disabled, label }: { checked: boolea
       aria-label={label}
       disabled={disabled}
       onClick={() => onChange(!checked)}
-      className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition disabled:opacity-50 ${checked ? 'bg-indigo-600' : 'bg-slate-300'}`}
+      className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition disabled:opacity-50 ${checked ? 'bg-black' : 'bg-slate-300'}`}
     >
       <span className={`inline-block h-4 w-4 rounded-full bg-white shadow transition ${checked ? 'translate-x-4' : 'translate-x-0.5'}`} />
     </button>

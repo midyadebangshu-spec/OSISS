@@ -113,7 +113,7 @@ export function Security({ vault, onChange }: { vault: VaultStatus; onChange: ()
       {newCode && (
         <Modal title="Your new passkey" footer={<Button variant="primary" onClick={() => setNewCode(null)}>I have written it down</Button>}>
           <p className="mb-3 text-sm text-slate-600">It is shown only once. The old passkey no longer works.</p>
-          <div className="rounded-lg border-2 border-dashed border-indigo-300 bg-indigo-50 py-4 text-center font-mono text-3xl font-bold tracking-[0.3em] text-indigo-800">
+          <div className="rounded-lg border-2 border-dashed border-neutral-400 bg-neutral-100 py-4 text-center font-mono text-3xl font-bold tracking-[0.3em] text-black">
             {newCode.slice(0, 3)}-{newCode.slice(3)}
           </div>
         </Modal>

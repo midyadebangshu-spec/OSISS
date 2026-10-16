@@ -36,11 +36,11 @@ export function AccessModeChoice({ value, onChange }: { value: AccessMode | null
           aria-checked={value === mode}
           onClick={() => onChange(mode)}
           className={`rounded-lg border p-4 text-left transition ${
-            value === mode ? 'border-indigo-500 bg-indigo-50 ring-2 ring-indigo-200' : 'border-slate-200 bg-white hover:border-slate-300'
+            value === mode ? 'border-black bg-neutral-100 ring-2 ring-neutral-300' : 'border-slate-200 bg-white hover:border-slate-300'
           }`}
         >
           <div className="mb-2 flex items-center gap-2 text-sm font-semibold">
-            <Icon className="h-4 w-4 text-indigo-600" />
+            <Icon className="h-4 w-4 text-neutral-900" />
             {title}
           </div>
           <ul className="list-disc space-y-1 pl-5 text-xs text-slate-600">

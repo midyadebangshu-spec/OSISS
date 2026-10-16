@@ -162,7 +162,7 @@ export function Dashboard() {
             <Tile
               icon={<Workflow className="h-4 w-4" />}
               title="Ingester"
-              tone={data.ingester.running ? (data.ingester.current ? 'indigo' : 'green') : 'slate'}
+              tone={data.ingester.running ? (data.ingester.current ? 'dark' : 'green') : 'slate'}
               status={!data.ingester.running ? 'Off' : data.ingester.current ? 'Working' : data.ingester.polling ? 'Polling' : 'Idle'}
             >
               {data.ingester.running ? (

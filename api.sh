@@ -24,4 +24,5 @@ if ! "$VENV_PYTHON" -c "import fastapi, uvicorn, tiktoken, google.protobuf, sent
   "$VENV_PYTHON" -m pip install -r "$PROJECT_ROOT/requirements.txt"
 fi
 
-exec "$VENV_PYTHON" -m uvicorn src.api_server:app --host 0.0.0.0 --port 8000
+# API_HOST=127.0.0.1 keeps the API reachable only through a reverse proxy on this machine (public deployments).
+exec "$VENV_PYTHON" -m uvicorn src.api_server:app --host "${API_HOST:-0.0.0.0}" --port "${API_PORT:-8000}"

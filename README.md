@@ -22,12 +22,13 @@ and what is still weak.
 8. [Improvements and experiments, with results](#8-improvements-and-experiments-with-results)
 9. [Current accuracy and known limits](#9-current-accuracy-and-known-limits)
 10. [Setup and usage](#10-setup-and-usage)
-11. [Configuration reference](#11-configuration-reference)
-12. [Project structure](#12-project-structure)
-13. [Testing and reproducing the results](#13-testing-and-reproducing-the-results)
-14. [Troubleshooting](#14-troubleshooting)
-15. [Roadmap](#15-roadmap)
-16. [Licenses](#16-licenses)
+11. [Using the admin app, step by step](#11-using-the-admin-app-step-by-step)
+12. [Configuration reference](#12-configuration-reference)
+13. [Project structure](#13-project-structure)
+14. [Testing and reproducing the results](#14-testing-and-reproducing-the-results)
+15. [Troubleshooting](#15-troubleshooting)
+16. [Roadmap](#16-roadmap)
+17. [Licenses](#17-licenses)
 
 ---
 
@@ -157,7 +158,7 @@ PDF → text (or OCR) → per-page word chunks → embeddings → PostgreSQL row
 6. **Embedding and storage.** BGE-M3 embeds each chunk (L2-normalised, 1024-d). Rows go to Postgres (`books`, `chunks`) and documents to
    Elasticsearch with `_id = book-{id}-chunk-{idx}`.
 7. **Metadata** (title / author / year / department) is currently guessed from the filename and is poor for names with hyphens
-   or underscores. Manual metadata entry is the first item on the [roadmap](#15-roadmap).
+   or underscores. Manual metadata entry is the first item on the [roadmap](#16-roadmap).
 
 ### Corpus
 
@@ -182,7 +183,7 @@ PDF → text (or OCR) → per-page word chunks → embeddings → PostgreSQL row
 
 ## 5. How a search works, step by step
 
-Every step names the setting that controls it (see [section 11](#11-configuration-reference)).
+Every step names the setting that controls it (see [section 12](#12-configuration-reference)).
 
 1. **Normalise the query.** Unicode NFC, invisible characters removed (soft hyphen, zero-width space, BOM; the joiners that Bengali and
    Hindi conjuncts need are kept), whitespace collapsed.
@@ -222,11 +223,11 @@ Every step names the setting that controls it (see [section 11](#11-configuratio
 | `GET /health` | liveness check (`{status, version, admin_enabled}`) |
 | `POST /api/search` `{query, top_k}` | returns `{exact_quote, book_title, author, department, page_number, pdf_link, paragraph_text, answer_text}` per result |
 | `GET /data/pdfs/<file>.pdf` | PDFs from `PDF_DIR` only (opened by the page viewer at `#page=N`) |
-| `/api/admin/*` | admin API for the desktop admin app, behind `ADMIN_TOKEN` (see [Admin app](#admin-app)) |
+| `/api/admin/*` | admin API for the desktop admin app, behind `ADMIN_TOKEN` (see [section 11](#11-using-the-admin-app-step-by-step)) |
 
 `/api/search` and `/data` follow the search access mode chosen in the admin app: **open** (anyone who can reach the server) or
 **key** (an `X-API-Key` header, or `?key=` on PDF links, is required except for pages served by this server or from an allowed
-origin). See [Serving on a domain or to apps](#serving-on-a-domain-or-to-apps).
+origin). See [11.6.7](#1167-choose-who-may-search-and-give-apps-api-keys).
 
 ---
 
@@ -618,74 +619,372 @@ Always use the `.venv` interpreter or the wrapper scripts; the files in `src/` u
 
 ### Admin app
 
-`admin/` is an Electron desktop app that controls an OSISS server, on this computer or anywhere else:
-
-* **Dashboard:** health of PostgreSQL, Elasticsearch, models, GPU and disk; ingester state. For a server on the same computer it
-  also starts and stops the Docker services and the API (`api.sh`, run detached so it keeps running after the app closes).
-* **Books:** fix titles, authors, years and departments (written to PostgreSQL *and* every Elasticsearch document of the book, so
-  search shows them at once, no re-embedding); upload a PDF with its metadata; re-ingest; delete. Deleting keeps the PDF on disk
-  and lists it under *Deleted*, where it can be restored with its old metadata; the ingester never re-adds a deleted file by itself.
-  Books whose title is still the file-name guess are flagged.
-* **Ingestion & jobs:** the ingester runs inside the API process and reuses its loaded embedder (no second copy on the GPU).
-  Turn folder polling on or off (same work as `./ingestion.sh`, kept across restarts), scan now, run `db_init` / `reindex_es` /
-  `backfill_exercise_flags` as jobs, and follow a live log. Jobs run one at a time.
-* **Search console:** the full pipeline with rerank / QA / retrieval scores and time per stage.
-* **Search settings:** change the search knobs (rerank, QA weight, MMR, candidates, transliteration, ...) without a restart; saved
-  values go to `data/admin/settings_overrides.json` and override the environment. Restart-only settings are shown read-only.
-* **Access & API keys:** choose the search access mode, allowed website origins, the public URL, and create / disable / delete API
-  keys for apps (only a SHA-256 of each key is stored).
-
-```bash
-./setup.sh                  # also writes a random ADMIN_TOKEN to .env (api.sh and ingestion.sh load .env)
-./api.sh
-cd admin && npm install && npm run dev       # development
-cd admin && npm run dist                     # Linux AppImage + .deb in admin/release/ (dist:win, dist:mac for others)
-```
-
-On first launch the app creates a random **6-character passkey** (no look-alike characters) that is shown once and then needed every
-time the app opens; it can be changed to a longer passphrase under *App security*. Saved servers and their admin tokens are
-encrypted with AES-256-GCM under a scrypt key derived from the passkey and, where the OS keychain is available, sealed with it too.
-After 5 wrong passkeys the app locks for 30 s, doubling each time up to 15 minutes, and it locks itself after 15 idle minutes.
-Forgetting the passkey means *Reset app*, which only clears the saved servers on that computer.
-
-The passkey protects the app on that computer; the **server** is protected by `ADMIN_TOKEN`. Every `/api/admin/*` call needs the
-`X-Admin-Token` header: without `ADMIN_TOKEN` the admin API answers 503, 10 wrong tokens from one address within 15 minutes block it
-for 15 minutes, and `ADMIN_ALLOWED_IPS` can limit admin calls to some addresses. The app sends tokens from its main process only
-(the UI never sees them) and refuses plain `http://` to a remote server unless the profile is explicitly marked as a trusted-LAN
-server.
-
-### Serving on a domain or to apps
-
-The same server can serve people through a website and other apps through the API:
-
-* **Website on a domain:** `cd frontend && npm run build`, set `SERVE_FRONTEND=true` so the API serves `frontend/dist` at `/`, and put
-  an HTTPS reverse proxy in front of port 8000. With Caddy, the whole config is:
-
-  ```
-  search.college.edu {
-      reverse_proxy 127.0.0.1:8000
-  }
-  ```
-
-  Set the domain as the public URL in the admin app. If the website is hosted elsewhere, add its origin to the allowed origins
-  (CORS).
-* **Apps:** create an API key per app in the admin app. Apps call `POST /api/search` with `X-API-Key`; with a public URL set,
-  `pdf_link` in the results is absolute.
-* **Access mode:** **open** lets anyone who can reach the server search and open PDFs (keys are optional and only count usage);
-  **key** requires a key, except for the server's own pages and allowed origins. That exemption relies on the `Origin`,
-  `Referer` and `Sec-Fetch-Site` headers, which browsers set honestly but scripts can forge: it keeps other websites out, but it is
-  not a lock against a determined user while the public website is up (that would need user logins). Until an admin chooses, the
-  server behaves as open.
+`admin/` is the desktop admin app. It lets you fix book details, add and delete books, run ingestion, test searches, change
+settings, decide who may search and hand out API keys, for a server on the same computer or anywhere else. Installing it and the
+three ways to run OSISS (one computer, campus network, public website) are described step by step in
+[section 11](#11-using-the-admin-app-step-by-step).
 
 ### Upgrading an existing install
 
 * Run `db_init.py` to add new columns and the Elasticsearch subfields, then `reindex_es.py` once to fill the `text.bn|hi|en` fields (in place, no re-embedding). The API also creates the admin tables (`excluded_files`, `api_clients`) at startup.
 * Add `ADMIN_TOKEN=<long random value>` to `.env` (or rerun `./setup.sh`) to enable the admin app.
+* `docker-compose.yml` now publishes PostgreSQL (5433) and Elasticsearch (9200) on `127.0.0.1` only. Run
+  `docker compose up -d postgres elasticsearch` once to apply it. Nothing in OSISS needs them from another machine.
 * Changing the Elasticsearch mapping or the embedding dimension generally means recreating the index and re-ingesting; chunk-boundary changes only affect books that are re-ingested.
 
 ---
 
-## 11. Configuration reference
+## 11. Using the admin app, step by step
+
+The admin app (`admin/`) is a desktop program for whoever runs OSISS. With it you can:
+
+* fix book titles and other details;
+* add, delete and restore books;
+* run and watch ingestion;
+* test searches;
+* change search settings without a restart;
+* decide who may use search;
+* hand out API keys to other apps.
+
+It can control a server on the same computer or one anywhere else.
+
+Pick the setup that matches how you will run OSISS, do the two common steps first (11.1 and 11.2), then follow your setup:
+
+| Setup | Who searches | Where the server runs | Admin app runs on |
+|---|---|---|---|
+| [A. One computer](#113-setup-a-everything-on-one-computer) | people at that computer | the same computer | the same computer |
+| [B. Campus network](#114-setup-b-a-server-on-the-campus-network) | everyone on the campus network | a server on the campus network | an admin's PC on the same network |
+| [C. Public website](#115-setup-c-a-public-website-on-your-own-domain) | everyone on the internet | a server with a public IP and your domain (e.g. `ossis.com`) | an admin's PC anywhere |
+
+[11.6](#116-everyday-tasks) covers the day-to-day tasks, and [11.7](#117-how-the-app-and-the-server-are-protected) how the app
+and the server are protected.
+
+> The screenshots come from a demo server with two sample PDFs and no Elasticsearch or models installed. That is why the
+> Dashboard shows Elasticsearch as down and the models as missing, and why the scores and timings in the search console screenshot are
+> illustrative. On a real install those tiles are green.
+
+### 11.1 Install the admin app
+
+The app is built from source (Node.js 20.19+ or 22.12+):
+
+```bash
+cd admin
+npm install
+npm run dist          # Linux: admin/release/OSISS Admin-1.0.0.AppImage and osiss-admin_1.0.0_amd64.deb
+```
+
+* **Debian/Ubuntu:** `sudo apt install ./release/osiss-admin_1.0.0_amd64.deb`, then start *OSISS Admin* from the applications menu.
+* **Other Linux:** `chmod +x "release/OSISS Admin-1.0.0.AppImage"` and run it.
+* **Windows / macOS:** run `npm run dist:win` on a Windows PC or `npm run dist:mac` on a Mac (installers are built on their own
+  system). These builds are configured but have only been tested on Linux so far. Starting and stopping services from the
+  Dashboard needs Linux or macOS.
+* **While developing the app:** `npm run dev` opens it with live reload.
+
+The built installer contains no server address or secret. Copy it to every admin PC.
+
+### 11.2 First launch: create your passkey
+
+1. Open the app and click **Create my passkey**.
+2. The app shows a random 6-character passkey, for example `KE9-YZD`. Write it down and keep it safe. It is shown only once.
+3. Type it back into **Type it back to confirm** (upper or lower case, with or without the dash) and click **Confirm and continue**.
+
+<img src="docs/images/admin/passkey-setup.png" width="720" alt="Creating the passkey on first launch">
+
+From now on the app asks for the passkey every time it opens (and after 15 minutes without use). If you forget it, see
+[11.6.8](#1168-lock-the-app-change-the-passkey-or-reset).
+
+### 11.3 Setup A: everything on one computer
+
+Use this to try OSISS, or when only the people at one computer will search.
+
+1. **Install the server:** in the OSISS folder run `./setup.sh`. Among other things it writes a random `ADMIN_TOKEN` into `.env`.
+   That token is what lets the admin app control the server.
+2. **Add your PDFs (optional now):** copy them into `data/pdfs/`. You can also add them later from the app (see
+   [11.6.2](#1162-add-a-book)).
+3. **Start the API once by hand to check it:** `./api.sh`. Later you can start and stop it from the app's Dashboard instead.
+4. **Open the admin app** and create your passkey ([11.2](#112-first-launch-create-your-passkey)). The **Add a server** form opens.
+5. Fill in the form:
+   * **Name:** `This computer`.
+   * **Where does the server run?:** *On this computer (can start / stop it)*.
+   * **Server URL:** `http://localhost:8000`.
+   * **OSISS folder on this computer:** click **Browse** and pick the OSISS folder.
+6. Click **Read token from .env**. The app reads `ADMIN_TOKEN` from the folder's `.env` file, so you never have to copy it by hand.
+7. Click **Save & test connection**. You should see *Connected: OSISS …, admin token accepted*.
+
+   <img src="docs/images/admin/add-local-server.png" width="720" alt="Adding the local server">
+
+8. Open **Dashboard**. The app asks how search should be served. For one computer choose **Open — everyone who can reach the
+   server** and click **Save choice** ([11.6.7](#1167-choose-who-may-search-and-give-apps-api-keys) explains both choices).
+
+   <img src="docs/images/admin/access-wizard.png" width="720" alt="Choosing the search access mode">
+
+9. The **Services on this computer** panel can start and stop PostgreSQL + Elasticsearch (**Start** / **Stop**) and the API
+   (**Start API** / **Stop API**). An API started from the app keeps running after you close the app. **API output** shows its log.
+   The tiles below show the health of every part of the server.
+
+   <img src="docs/images/admin/dashboard.png" width="720" alt="Dashboard">
+
+10. **Ingest the PDFs:** open **Ingestion & jobs** and click **Scan now**, or switch on **Poll the PDF folder** so new files in
+    `data/pdfs/` are picked up every few seconds. Then fix the guessed titles ([11.6.1](#1161-fix-a-guessed-title)).
+11. **Search:** run the website with `cd frontend && npm run dev` and open <http://localhost:5173>. Or build it once
+    (`npm run build`), add `SERVE_FRONTEND=true` to `.env`, restart the API and open <http://localhost:8000>.
+
+### 11.4 Setup B: a server on the campus network
+
+One machine runs OSISS for everyone on the campus network; an admin manages it from their own PC.
+
+**On the server**
+
+1. Install OSISS and run `./setup.sh`, then ingest the PDFs (`./ingestion.sh --once`, or later from the app).
+2. Serve the website from the API so students only need a browser:
+
+   ```bash
+   cd frontend && npm install && npm run build && cd ..
+   echo "SERVE_FRONTEND=true" >> .env
+   ```
+
+3. Let only the admin PC use the admin API: add its address to `.env`, e.g. `echo "ADMIN_ALLOWED_IPS=192.168.1.50" >> .env`.
+   Several addresses or ranges are separated by commas (`192.168.1.50,10.0.0.0/24`).
+4. Keep the API running across reboots with the systemd service in `deploy/osiss-api.service`. Change `User` and the `/opt/OSISS`
+   paths to yours, and set `Environment=API_HOST=0.0.0.0` so the campus network can reach it. Then run:
+
+   ```bash
+   sudo cp deploy/osiss-api.service /etc/systemd/system/
+   sudo systemctl daemon-reload && sudo systemctl enable --now osiss-api
+   ```
+
+5. Note the server's address (`hostname -I`, e.g. `192.168.1.20`) and the token (`grep ADMIN_TOKEN .env`). Give the token to the
+   admin in person or over a secure channel, not by email.
+
+Students now open `http://192.168.1.20:8000` in a browser.
+
+**On the admin PC**
+
+6. Install the app ([11.1](#111-install-the-admin-app)) and create a passkey ([11.2](#112-first-launch-create-your-passkey)).
+7. In **Servers**, click **Add server** and fill in:
+   * **Where does the server run?:** *Elsewhere (a domain or another machine)*.
+   * **Server URL:** `http://192.168.1.20:8000`.
+   * **Admin token:** paste the token.
+   * Tick **Allow plain http:// to this server**. Without HTTPS the token travels unencrypted, which is acceptable only on a
+     network you trust. To avoid it, put Caddy in front as in Setup C, with an internal certificate.
+
+   <img src="docs/images/admin/add-remote-server.png" width="720" alt="Adding a server on the campus network">
+
+8. Click **Save & test connection**, then open **Dashboard** and choose the access mode (usually **Open** on a campus network).
+
+Start, stop and restart the server on the server itself (`sudo systemctl restart osiss-api`). The Dashboard's start/stop buttons
+only work for *This computer* servers. Everything else in the app works the same for a remote server.
+
+### 11.5 Setup C: a public website on your own domain
+
+This makes search available to everyone on the internet at an address such as `https://ossis.com`. You need:
+
+* **A domain you own.** Check that the name is free and register it.
+* **A server that is always on**, with a public IP address. It can be your own machine or a cloud VM. It needs enough memory for the
+  models (16 GB RAM or more; a GPU makes searches much faster).
+* **Ports 80 and 443 open** to the internet (for HTTPS) and port 22 for SSH. Nothing else.
+
+**On the server** (Ubuntu shown; run as a user with `sudo`)
+
+1. Create a user and install OSISS in `/opt/OSISS`:
+
+   ```bash
+   sudo useradd -m -s /bin/bash osiss && sudo usermod -aG docker osiss
+   sudo git clone https://github.com/midyadebangshu-spec/OSISS /opt/OSISS && sudo chown -R osiss: /opt/OSISS
+   sudo -iu osiss bash -c 'cd /opt/OSISS && ./setup.sh'
+   ```
+
+   `docker-compose.yml` publishes PostgreSQL and Elasticsearch on `127.0.0.1` only, so they are never reachable from the internet
+   even though Docker bypasses host firewalls.
+2. Build the website: `sudo -iu osiss bash -c 'cd /opt/OSISS/frontend && npm run build'`.
+3. Install the API service. `deploy/osiss-api.service` already sets `API_HOST=127.0.0.1` (only the proxy on this machine may reach
+   the API) and `SERVE_FRONTEND=true`:
+
+   ```bash
+   sudo cp /opt/OSISS/deploy/osiss-api.service /etc/systemd/system/
+   sudo systemctl daemon-reload && sudo systemctl enable --now osiss-api
+   curl http://127.0.0.1:8000/health          # {"status":"ok",...}
+   ```
+
+4. **DNS:** at your domain registrar, create an `A` record for `ossis.com` (and `www` if you want it) pointing to the server's
+   public IP. Wait until `ping ossis.com` shows that IP.
+5. **HTTPS with Caddy:** install Caddy (<https://caddyserver.com/docs/install>), then:
+
+   ```bash
+   sudo cp /opt/OSISS/deploy/Caddyfile.example /etc/caddy/Caddyfile
+   sudo nano /etc/caddy/Caddyfile     # replace ossis.example.com with your domain, 203.0.113.10 with the admin PC's public IP
+   sudo systemctl reload caddy
+   ```
+
+   Caddy gets and renews the HTTPS certificate on its own. The example also answers `403` to `/api/admin/*` from any other address,
+   so the admin API is not exposed to the internet. Remove that block if admins connect from changing addresses (the token and its
+   lockout still protect it).
+6. **Firewall:** `sudo ufw allow 22,80,443/tcp && sudo ufw enable`.
+7. Open `https://ossis.com` in a browser: the search page should load and answer questions.
+
+**On the admin PC**
+
+8. In the app, **Add server** with *Elsewhere*, URL `https://ossis.com` and the token from `/opt/OSISS/.env`. Leave
+   *Allow plain http://* unticked. **Save & test connection**.
+9. In **Access & API keys**, decide who may search ([11.6.7](#1167-choose-who-may-search-and-give-apps-api-keys)) and enter
+   `https://ossis.com` as **Public URL of this server**, so PDF links in API results are complete addresses that apps can open.
+   If the website is hosted somewhere else than this server, add that site's address under **Website domains**.
+10. Give each app that should use the search its own API key (also [11.6.7](#1167-choose-who-may-search-and-give-apps-api-keys)).
+
+Before going public, consider:
+
+* **Licences:** with open access, anyone can download every PDF. Make sure the books may be shared that way.
+* **Capacity:** one API process holds one copy of the models, and searches that arrive together share it, so each one gets slower
+  as more people search at the same moment. Check the time per search in the Search console on your hardware before announcing the
+  site. Serving heavy public traffic needs several API copies behind a load balancer, which is on the [roadmap](#16-roadmap).
+* **Updates:** to update, run `git pull`, then `sudo systemctl restart osiss-api`, and rebuild the website if `frontend/` changed.
+
+### 11.6 Everyday tasks
+
+#### 11.6.1 Fix a guessed title
+
+Books added from `data/pdfs/` get their title and author from the file name, which is often wrong. Those books are marked
+**guessed** in **Books**, and **Only the … with guessed titles** lists just them.
+
+<img src="docs/images/admin/books-guessed.png" width="720" alt="Books with a guessed title">
+
+1. Click the book.
+2. Correct **Title**, **Author**, **Year** and **Department**.
+3. Click **Save metadata**.
+
+The change is written to both databases at once, so search results show it immediately; nothing is re-read or re-embedded. **Open
+PDF** shows the book to check its cover.
+
+<img src="docs/images/admin/edit-book.png" width="720" alt="Editing a book's details">
+
+#### 11.6.2 Add a book
+
+1. In **Books**, click **Add book**, then **Choose PDF…**.
+2. The fields are pre-filled from the file name. Correct them.
+3. Click **Upload and ingest**.
+
+<img src="docs/images/admin/upload-form.png" width="720" alt="Adding a book with its details">
+
+The PDF is copied to the server's `data/pdfs/` and ingested with the details you entered. Scanned or legacy-font Bengali/Hindi books
+are OCRed, which can take several minutes. You can close the window: the job continues on the server and appears under
+**Ingestion & jobs**. Uploading a PDF that is already in the library is refused.
+
+<img src="docs/images/admin/upload-done.png" width="720" alt="Upload finished">
+
+#### 11.6.3 Delete and restore a book
+
+1. Open the book and click **Delete**.
+2. Confirm.
+
+<img src="docs/images/admin/delete-confirm.png" width="720" alt="Confirming a delete">
+
+The book disappears from search, but its PDF stays on the server and is listed under **Books → Deleted**. The ingester will not
+add it back by itself. **Restore** ingests it again with the details it had.
+
+<img src="docs/images/admin/deleted-restore.png" width="720" alt="Deleted books with Restore">
+
+**Re-ingest from file** (in the book window) reads the PDF again and keeps its details. Use it after replacing the file or changing
+the ingestion settings.
+
+#### 11.6.4 Ingestion, jobs and maintenance
+
+The **Ingestion & jobs** page has these controls:
+
+* **Poll the PDF folder:** checks `data/pdfs/` every few seconds for new or changed PDFs. The setting is kept across restarts.
+* **Scan now:** runs that check once.
+* **Maintenance:** runs the upgrade and repair scripts (*Update database schema*, *Re-index language fields*, *Re-apply exercise
+  flags*). Run them after upgrading OSISS when the release notes say so.
+* **Jobs:** lists everything queued or done since the server started. A queued job can be cancelled.
+* **Live log:** shows the progress, including OCR.
+
+<img src="docs/images/admin/ingestion.png" width="720" alt="Ingestion, jobs and live log">
+
+#### 11.6.5 Test a search
+
+**Search console** runs the same search as the website and shows the scores for each result and the time each stage took. Use it to
+check a new book, or to compare a setting before and after a change.
+
+<img src="docs/images/admin/search-console.png" width="720" alt="Search console (demo data)">
+
+#### 11.6.6 Change search settings
+
+**Search settings** lists the knobs the server reads on every search (reranking, QA weight, number of candidates, romanized queries,
+…).
+
+1. Change one or more values. Each changed value is marked *changed*.
+2. Click **Save changes**. The change takes effect at once and is kept across restarts.
+3. Try a few questions in the Search console, and use **Discard** or change the value back if results get worse.
+
+Settings that need a restart (database addresses, model paths, …) are listed read-only at the bottom; change them in `.env`.
+
+<img src="docs/images/admin/search-settings.png" width="720" alt="Search settings">
+
+#### 11.6.7 Choose who may search and give apps API keys
+
+In **Access & API keys** choose one of:
+
+* **Open:** anyone who can reach the server can search and open PDFs. Apps may send a key so you can see their usage, but it is not
+  required. Right for a campus network or one computer.
+* **Approved apps only:** other apps must send an API key. Your own website (served by this server, or listed under **Website
+  domains**) keeps working without one. This keeps other websites and unknown apps out. It cannot stop a determined person who
+  copies how your website calls the API, because that would need user logins, which OSISS does not have yet.
+
+**Website domains** lists browser sites allowed to call the API (one per line, e.g. `https://ossis.com`). **Public URL of this
+server** makes PDF links in API results complete. Click **Save**.
+
+<img src="docs/images/admin/access.png" width="720" alt="Access settings and API keys">
+
+To give an app access:
+
+1. Click **New key**, name the app and click **Create**.
+2. Copy the key at once. The server stores only a fingerprint of it, so it can never be shown again.
+3. Give the key to the app's developer together with the example shown under **For app developers**.
+
+The switch next to a key pauses it; the bin deletes it. The list shows how often each app used its key and when.
+
+<img src="docs/images/admin/new-api-key.png" width="720" alt="A new API key, shown once">
+
+An app then searches like this (the response format is in [section 5](#api)):
+
+```bash
+curl -X POST https://ossis.com/api/search -H 'Content-Type: application/json' \
+     -H 'X-API-Key: osk_…' -d '{"query": "What is thermodynamics?", "top_k": 3}'
+```
+
+#### 11.6.8 Lock the app, change the passkey or reset
+
+* **Lock now** (bottom left) locks the app at once. It also locks itself after the idle time set under **App security →
+  Auto-lock** (15 minutes by default).
+* **App security → Change passkey:** get a new random passkey, or switch to a passphrase of 10 or more characters (stronger, and
+  recommended on computers without an OS keychain).
+* After 5 wrong passkeys the app refuses to unlock for 30 seconds, then 1, 2, 4… minutes (up to 15).
+* **Forgot the passkey?** on the lock screen, or **Reset app**, deletes the saved servers on this computer and creates a new
+  passkey. Nothing on the servers changes; add them again with their tokens.
+
+<img src="docs/images/admin/app-security.png" width="720" alt="App security">
+
+<img src="docs/images/admin/lockout.png" width="480" alt="Locked after too many wrong passkeys">
+
+### 11.7 How the app and the server are protected
+
+* **The app on a computer** is protected by the passkey. Saved servers and their admin tokens are encrypted with AES-256-GCM under
+  a key derived from the passkey with scrypt. Where the OS keychain is available (Windows, macOS, Linux desktops with a keyring),
+  they are also sealed with it, so copying the app's files to another computer is not enough to try passkeys there.
+* **The server** is protected by its `ADMIN_TOKEN`:
+  * every `/api/admin/*` call must carry it;
+  * without one set, the admin API is switched off (503);
+  * 10 wrong tokens from one address within 15 minutes block that address for 15 minutes;
+  * `ADMIN_ALLOWED_IPS` and the Caddy example can limit admin calls to known addresses.
+* **Tokens never reach the app's screens.** All server calls are made by the app's background process, which only talks to
+  `/health` and `/api/admin/*`. It refuses plain `http://` to remote servers unless you tick the trusted-network option.
+* **Treat the token like a password.** Anyone with `ADMIN_TOKEN` can change the library. To replace it:
+  1. Edit `.env` on the server.
+  2. Restart the API.
+  3. Update the token under **Servers** in each admin app.
+
+---
+
+## 12. Configuration reference
 
 All settings are environment variables, read at import time into the frozen `Settings` dataclass in `src/config.py`.
 
@@ -762,13 +1061,14 @@ All settings are environment variables, read at import time into the frozen `Set
 | `CORS_ORIGINS` | *(empty)* | Comma-separated website origins allowed to call the API |
 | `PUBLIC_BASE_URL` | *(empty)* | Makes `pdf_link` absolute, e.g. `https://search.college.edu` |
 | `SERVE_FRONTEND` | `false` | Serve `frontend/dist` at `/` |
+| `API_HOST`, `API_PORT` | `0.0.0.0`, `8000` | Where `api.sh` listens; `127.0.0.1` behind a reverse proxy on the same machine |
 
 Settings marked as runtime-editable in the admin app (search knobs, `POLLING_INTERVAL_SECONDS`, `SEARCH_ACCESS`, `CORS_ORIGINS`,
 `PUBLIC_BASE_URL`) can be overridden from `settings_overrides.json`, which wins over the environment.
 
 ---
 
-## 12. Project structure
+## 13. Project structure
 
 ```
 src/
@@ -808,15 +1108,19 @@ docs/
   results.json             every number behind the tables and graphs in this README
   make_figures.py          regenerates docs/images/*.png from results.json
   images/                  the graphs
+  images/admin/            admin app screenshots used in section 11
 data/pdfs/                 source PDFs (git-ignored)
 models/                    local model cache (git-ignored)
-docker-compose.yml         Postgres + Elasticsearch
+docker-compose.yml         Postgres + Elasticsearch (published on 127.0.0.1 only)
+deploy/
+  Caddyfile.example        HTTPS reverse proxy for a public domain, admin API limited to the admin's IP
+  osiss-api.service        systemd unit: start the API at boot, restart it if it stops
 setup.sh, ingestion.sh, api.sh   bootstrap and runner wrappers
 ```
 
 ---
 
-## 13. Testing and reproducing the results
+## 14. Testing and reproducing the results
 
 ```bash
 # unit tests (no services needed). The env var avoids system ROS pytest plugins that crash collection.
@@ -843,7 +1147,7 @@ Running the evaluation while the API server is up can run out of GPU memory on a
 
 ---
 
-## 14. Troubleshooting
+## 15. Troubleshooting
 
 * **Docker permission denied:** add your user to the `docker` group and log in again, or run setup with sudo.
 * **Missing Python modules when running scripts:** use the wrappers (`./ingestion.sh`, `./api.sh`) or activate `.venv`.
@@ -858,18 +1162,20 @@ Running the evaluation while the API server is up can run out of GPU memory on a
 
 ---
 
-## 15. Roadmap
+## 16. Roadmap
 
-1. ~~**Metadata and admin app**~~ — done: see [Admin app](#admin-app). Next: fix the existing guessed titles with it, and add
+1. ~~**Metadata and admin app**~~ — done: see [section 11](#11-using-the-admin-app-step-by-step). Next: fix the existing guessed titles with it, and add
    user logins if search must be private while a public website is up.
 2. **A trustworthy accuracy number:** 50–100 natural questions written independently in all three languages.
 3. **Cross-language retrieval:** the language-mismatch BM25 rule and a reranker blend ([8.6](#86-experiment-soft-bm25-weight-for-cross-language-questions)), validated on a larger cross-language set.
 4. **Quote quality:** better sentence splitting around section numbers and a fallback when the QA span is a fragment.
 5. **More books and OCR quality checks** for Bengali/Hindi conjuncts.
+6. **Scaling out for heavy public traffic:** run several API copies behind a load balancer (models loaded once per copy, GPU
+   sharing, background ingestion moved to one copy) and a managed or replicated Elasticsearch/PostgreSQL.
 
 ---
 
-## 16. Licenses
+## 17. Licenses
 
 This project is open source and intended for academic and institutional deployment. Dependencies keep their own licenses; please check them before redistributing or deploying commercially. In particular:
 **PyMuPDF** is AGPL-3.0 (or commercial), **Elasticsearch 8.10** is under the Elastic License 2.0 / SSPL, and `deepset/xlm-roberta-large-squad2` is CC-BY-4.0 (attribution required). The embedder (MIT), reranker (Apache-2.0),

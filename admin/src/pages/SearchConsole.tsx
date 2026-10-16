@@ -82,7 +82,7 @@ export function SearchConsole() {
         <>
           <Card title="Run">
             <div className="flex flex-wrap items-center gap-2 text-sm">
-              <Badge tone="indigo">mode: {response.mode ?? '—'}</Badge>
+              <Badge tone="dark">mode: {response.mode ?? '—'}</Badge>
               {Object.entries(response.variant_queries).map(([language, text]) => (
                 <Badge key={language}>
                   {language}: {text}
@@ -96,7 +96,7 @@ export function SearchConsole() {
                   key={stage}
                   title={`${stage}: ${(response.timings[stage] * 1000).toFixed(0)} ms`}
                   style={{ width: `${(100 * response.timings[stage]) / Math.max(response.timings.total, ...STAGES.map((name) => response.timings[name] ?? 0).filter(Boolean), 1e-9)}%` }}
-                  className={['bg-slate-400', 'bg-indigo-500', 'bg-violet-500', 'bg-sky-500', 'bg-emerald-500'][index]}
+                  className={['bg-neutral-300', 'bg-neutral-900', 'bg-neutral-500', 'bg-neutral-400', 'bg-neutral-700'][index]}
                 />
               ))}
             </div>
@@ -125,7 +125,7 @@ export function SearchConsole() {
                 </div>
               }
             >
-              <blockquote className="border-l-4 border-indigo-200 pl-3 text-sm">
+              <blockquote className="border-l-4 border-neutral-300 pl-3 text-sm">
                 <Highlighted text={result.quote} answer={result.answer} />
               </blockquote>
               <details className="mt-2 text-xs text-slate-500">

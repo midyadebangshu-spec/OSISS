@@ -7,7 +7,80 @@ import { osiss } from '../lib/bridge.ts'
 import { formatBytes, formatDuration, timeAgo } from '../lib/format.ts'
 import { useAction, useLoader } from '../lib/hooks.ts'
 import { useServer } from '../lib/server.ts'
-import type { ServerStatus } from '../lib/types.ts'
+import type { SearchMetrics, ServerStatus } from '../lib/types.ts'
+
+function seconds(value: number | null | undefined): string {
+  if (value === null || value === undefined) return '—'
+  return value < 1 ? `${Math.round(value * 1000)} ms` : `${value.toFixed(1)} s`
+}
+
+function Stat({ label, value, hint }: { label: string; value: ReactNode; hint?: string }) {
+  return (
+    <div>
+      <div className="text-xs text-slate-500">{label}</div>
+      <div className="text-lg font-semibold tabular-nums text-black">{value}</div>
+      {hint && <div className="text-[11px] text-slate-400">{hint}</div>}
+    </div>
+  )
+}
+
+const STAGE_SHADES = ['bg-neutral-300', 'bg-neutral-900', 'bg-neutral-500', 'bg-neutral-400', 'bg-neutral-700']
+
+function SearchLoad() {
+  const { call, profile } = useServer()
+  const metrics = useLoader(() => call<SearchMetrics>({ path: '/api/admin/metrics' }), 5000, [profile.id])
+  const data = metrics.data
+  if (!data) return metrics.error ? <Alert>{metrics.error}</Alert> : null
+  const stages = Object.entries(data.stage_seconds).filter(([, value]) => value)
+  const stageTotal = stages.reduce((sum, [, value]) => sum + (value ?? 0), 0)
+  const refused = data.refused_rate_limit + data.refused_busy
+  return (
+    <Card
+      title="Search load (last 5 minutes)"
+      actions={data.waiting > 0 ? <Badge tone="amber">{data.waiting} waiting</Badge> : <Badge tone="green">No queue</Badge>}
+    >
+      <div className="grid grid-cols-2 gap-4 md:grid-cols-6">
+        <Stat label="Searches / minute" value={data.searches_per_minute.toFixed(1)} hint={`${data.searches} in total`} />
+        <Stat label="Typical time" value={seconds(data.latency_p50)} hint="median, without cache hits" />
+        <Stat label="Slow searches" value={seconds(data.latency_p95)} hint="95th percentile" />
+        <Stat label="Running now" value={`${data.running} / ${data.concurrency}`} hint={`${data.waiting} waiting (max ${data.limits.search_queue_limit})`} />
+        <Stat
+          label="From cache"
+          value={data.cache_hit_rate === null ? '—' : `${Math.round(data.cache_hit_rate * 100)} %`}
+          hint={data.limits.search_cache_size ? `${data.cache_entries} answers cached` : 'cache is off now'}
+        />
+        <Stat
+          label="Refused"
+          value={<span className={refused ? 'text-rose-700' : undefined}>{refused}</span>}
+          hint={`${data.refused_rate_limit} rate limit · ${data.refused_busy} busy`}
+        />
+      </div>
+      {stageTotal > 0 && (
+        <div className="mt-4">
+          <div className="mb-1 text-xs text-slate-500">Where the time goes (average per search)</div>
+          <div className="flex h-2.5 overflow-hidden rounded-full bg-slate-100">
+            {stages.map(([stage, value], index) => (
+              <div key={stage} title={`${stage}: ${seconds(value)}`} style={{ width: `${(100 * (value ?? 0)) / stageTotal}%` }} className={STAGE_SHADES[index % STAGE_SHADES.length]} />
+            ))}
+          </div>
+          <div className="mt-1 flex flex-wrap gap-x-4 text-xs text-slate-500">
+            {stages.map(([stage, value]) => (
+              <span key={stage}>
+                {stage} {seconds(value)}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+      <div className="mt-3 text-xs text-slate-500">
+        Models in {data.limits.model_precision} · rate limit{' '}
+        {data.limits.search_rate_limit_per_minute ? `${data.limits.search_rate_limit_per_minute}/min per IP` : 'off'}
+        {data.limits.api_key_rate_limit_per_minute ? `, ${data.limits.api_key_rate_limit_per_minute}/min per API key` : ''}. Change these
+        under Search settings → Load protection.
+      </div>
+    </Card>
+  )
+}
 
 function Tile({ icon, title, tone, status, children }: { icon: ReactNode; title: string; tone: Tone; status: string; children?: ReactNode }) {
   return (
@@ -210,6 +283,7 @@ export function Dashboard() {
               </div>
             </Tile>
           </div>
+          <SearchLoad />
           <Card title="Server">
             <div className="flex flex-wrap gap-x-8 gap-y-2 text-sm text-slate-600">
               <span>OSISS {data.version}</span>

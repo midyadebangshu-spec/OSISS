@@ -86,7 +86,9 @@ export function Security({ vault, onChange }: { vault: VaultStatus; onChange: ()
       <Card title="Auto-lock">
         <div className="flex items-end gap-3">
           <Field label="Lock after this many idle minutes">
-            <Input type="number" min={1} max={240} className="w-28" value={autoLock} onChange={(event) => setAutoLock(Number(event.target.value))} />
+            <div className="w-28">
+              <Input type="number" min={1} max={240} value={autoLock} onChange={(event) => setAutoLock(Number(event.target.value))} />
+            </div>
           </Field>
           <Button
             busy={busy}

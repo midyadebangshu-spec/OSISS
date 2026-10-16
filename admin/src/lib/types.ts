@@ -84,7 +84,7 @@ export type SettingField = {
   name: string
   env: string
   kind: 'bool' | 'int' | 'float' | 'choice' | 'origins' | 'url'
-  group: 'search' | 'ingestion' | 'access'
+  group: 'search' | 'ingestion' | 'load' | 'access'
   label: string
   help: string
   min: number | null
@@ -114,6 +114,31 @@ export type ApiKey = {
   last_used_at: string | null
   request_count: number
   key?: string
+}
+
+export type SearchMetrics = {
+  window_seconds: number
+  searches: number
+  searches_per_minute: number
+  cache_hits: number
+  cache_hit_rate: number | null
+  latency_p50: number | null
+  latency_p95: number | null
+  stage_seconds: Record<string, number | null>
+  refused_rate_limit: number
+  refused_busy: number
+  running: number
+  waiting: number
+  concurrency: number
+  cache_entries: number
+  limits: {
+    search_rate_limit_per_minute: number
+    api_key_rate_limit_per_minute: number
+    search_queue_limit: number
+    search_cache_size: number
+    search_cache_ttl_seconds: number
+    model_precision: string
+  }
 }
 
 export type ConsoleResult = {

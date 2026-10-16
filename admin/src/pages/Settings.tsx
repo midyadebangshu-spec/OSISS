@@ -17,17 +17,20 @@ function FieldInput({ field, value, onChange }: { field: SettingField; value: un
       </select>
     )
   }
+  // The wrapper sets the width: Input's own w-full would win over a w-32 class on the input.
   return (
-    <Input
-      className="w-32 text-right tabular-nums"
-      type="number"
-      step={field.kind === 'int' ? 1 : 0.05}
-      min={field.min ?? undefined}
-      max={field.max ?? undefined}
-      value={value === '' ? '' : String(value)}
-      onChange={(event) => onChange(event.target.value === '' ? '' : Number(event.target.value))}
-      aria-label={field.label}
-    />
+    <div className="w-32 shrink-0">
+      <Input
+        className="text-right tabular-nums"
+        type="number"
+        step={field.kind === 'int' ? 1 : 0.05}
+        min={field.min ?? undefined}
+        max={field.max ?? undefined}
+        value={value === '' ? '' : String(value)}
+        onChange={(event) => onChange(event.target.value === '' ? '' : Number(event.target.value))}
+        aria-label={field.label}
+      />
+    </div>
   )
 }
 
@@ -41,6 +44,7 @@ export function SettingsPage() {
   const fields = settings.data.editable.filter((field) => field.group !== 'access')
   const groups = [
     { key: 'search', title: 'Search pipeline' },
+    { key: 'load', title: 'Load protection' },
     { key: 'ingestion', title: 'Ingestion' },
   ]
   const dirty = Object.keys(changes).length > 0

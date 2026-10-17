@@ -1,0 +1,30 @@
+# Copy to terraform.tfvars and edit. See deploy/aws/README.md.
+region      = "ap-south-1"
+name        = "osiss"
+domain_name = "ossis.example.com"
+
+# Route 53 hosted zone of the domain (empty: add the DNS records yourself, see README).
+route53_zone_id = ""
+
+# Your office / admin PC public address(es) for the admin app (empty: anyone, token still required).
+admin_cidrs = ["203.0.113.10/32"]
+
+search_instance_type = "g5.xlarge"
+search_min           = 1
+search_desired       = 2
+search_max           = 4
+
+worker_instance_type = "g4dn.xlarge"
+worker_use_gpu       = true
+
+elasticsearch_mode = "self_managed" # or "elastic_cloud" with the two settings below
+# elastic_cloud_url     = "https://my-deployment.es.ap-south-1.aws.elastic-cloud.com:443"
+# elastic_cloud_api_key = "..."   # better: TF_VAR_elastic_cloud_api_key in the environment
+
+enable_redis              = false
+waf_search_limit_per_5min = 0
+
+app_environment = {
+  MODEL_PRECISION    = "fp32"
+  SEARCH_CONCURRENCY = "2"
+}

@@ -45,3 +45,13 @@ admin/release/
 # code-review-graph
 .code-review-graph/
 .mcp.json
+
+# Secrets for deploy/docker-compose.replicas.yml
+deploy/replicas.env
+
+# Terraform (deploy/aws)
+.terraform/
+*.tfstate
+*.tfstate.*
+terraform.tfvars
+crash.log

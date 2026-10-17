@@ -1,0 +1,137 @@
+# Several OSISS API copies on ONE machine (e.g. one per GPU), behind Caddy, sharing state through PostgreSQL.
+#
+#   cp deploy/replicas.env.example deploy/replicas.env      # set ADMIN_TOKEN, OSISS_SITE, ...
+#   docker compose -f deploy/docker-compose.replicas.yml --env-file deploy/replicas.env up -d --build
+#   docker compose -f deploy/docker-compose.replicas.yml --env-file deploy/replicas.env --profile redis up -d   # + Redis
+#
+# - worker: runs ingestion jobs and folder polling (INGEST_WORKER=true) and creates the schema; it also answers
+#   searches, but Caddy sends search traffic to the search copies.
+# - search-1 / search-2: search-only copies, one GPU each. Add more by copying a block and listing it in
+#   deploy/Caddyfile.replicas.
+# - PDFs: the shared "pdfs" / "uploads" volumes here; set STORAGE_BACKEND=s3 + S3_BUCKET to use S3 instead.
+# Models: put them in ../models (python src/download_models.py) or set MODELS_S3_URI.
+
+x-osiss: &osiss
+  build:
+    context: ..
+  image: osiss-api:latest
+  restart: unless-stopped
+  depends_on:
+    postgres:
+      condition: service_healthy
+    elasticsearch:
+      condition: service_healthy
+  environment: &osiss-env
+    ADMIN_TOKEN: ${ADMIN_TOKEN:?set ADMIN_TOKEN in deploy/replicas.env}
+    STATE_BACKEND: postgres
+    POSTGRES_HOST: postgres
+    POSTGRES_PORT: "5432"
+    ELASTICSEARCH_URL: http://elasticsearch:9200
+    REDIS_URL: ${REDIS_URL:-}
+    STORAGE_BACKEND: ${STORAGE_BACKEND:-local}
+    S3_BUCKET: ${S3_BUCKET:-}
+    S3_REGION: ${S3_REGION:-}
+    MODELS_S3_URI: ${MODELS_S3_URI:-}
+    PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-}
+    MODEL_PRECISION: ${MODEL_PRECISION:-fp32}
+    SEARCH_CONCURRENCY: ${SEARCH_CONCURRENCY:-2}
+    # Only Caddy (on the private compose network) can reach the copies, so its X-Forwarded-For is trusted.
+    FORWARDED_ALLOW_IPS: "*"
+    WARMUP_ON_START: "true"
+  volumes:
+    - ../models:/app/models:ro
+    - pdfs:/app/data/pdfs
+    - uploads:/app/data/uploads
+
+services:
+  postgres:
+    image: postgres:15
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: osiss
+      POSTGRES_USER: osiss
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-osiss}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U osiss -d osiss"]
+      interval: 5s
+      retries: 30
+
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.10.4
+    restart: unless-stopped
+    environment:
+      discovery.type: single-node
+      xpack.security.enabled: "false"
+      ES_JAVA_OPTS: "-Xms2g -Xmx2g"
+    volumes:
+      - es_data:/usr/share/elasticsearch/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:9200/_cluster/health || exit 1"]
+      interval: 10s
+      retries: 30
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    profiles: ["redis"]
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+
+  worker:
+    <<: *osiss
+    environment:
+      <<: *osiss-env
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-osiss}
+      INGEST_WORKER: "true"
+      RUN_DB_INIT: "true"
+      REPLICA_ID: worker
+    deploy:
+      resources:
+        reservations:
+          devices: [{driver: nvidia, device_ids: ["0"], capabilities: [gpu]}]
+
+  search-1:
+    <<: *osiss
+    environment:
+      <<: *osiss-env
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-osiss}
+      INGEST_WORKER: "false"
+      REPLICA_ID: search-1
+    deploy:
+      resources:
+        reservations:
+          devices: [{driver: nvidia, device_ids: ["0"], capabilities: [gpu]}]
+
+  search-2:
+    <<: *osiss
+    environment:
+      <<: *osiss-env
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-osiss}
+      INGEST_WORKER: "false"
+      REPLICA_ID: search-2
+    deploy:
+      resources:
+        reservations:
+          devices: [{driver: nvidia, device_ids: ["1"], capabilities: [gpu]}]
+
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    depends_on: [search-1, search-2, worker]
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      OSISS_SITE: ${OSISS_SITE:-:80}
+      ADMIN_IP: ${ADMIN_IP:-0.0.0.0/0}
+    volumes:
+      - ./Caddyfile.replicas:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+
+volumes:
+  postgres_data:
+  es_data:
+  pdfs:
+  uploads:
+  caddy_data:

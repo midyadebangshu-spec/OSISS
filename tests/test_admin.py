@@ -158,7 +158,10 @@ def test_safe_pdf_name_and_unique_path(tmp_path):
         admin.safe_pdf_name("notes.txt")
     (tmp_path / "book.pdf").write_bytes(b"x")
     (tmp_path / "book (2).pdf").write_bytes(b"x")
-    assert admin.unique_pdf_path(str(tmp_path), "book.pdf").endswith("book (3).pdf")
+    import storage
+
+    taken = {"book.pdf", "book (2).pdf"}
+    assert storage._unique_name("book.pdf", taken.__contains__) == "book (3).pdf"
 
 
 def test_pdf_link_and_guessed_title(override):

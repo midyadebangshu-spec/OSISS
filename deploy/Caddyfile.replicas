@@ -1,0 +1,24 @@
+# Load balancer for deploy/docker-compose.replicas.yml.
+# OSISS_SITE: your domain (e.g. ossis.example.com, HTTPS automatic) or :80 for plain HTTP on a private network.
+# ADMIN_IP: address(es) allowed to use /api/admin/* (default: anyone; the admin token still applies).
+
+{$OSISS_SITE} {
+	encode gzip
+
+	@admin_from_elsewhere {
+		path /api/admin/*
+		not remote_ip {$ADMIN_IP}
+	}
+	respond @admin_from_elsewhere "Forbidden" 403
+
+	# Searches and the website go to the search copies; a copy is only used while its /ready answers 200.
+	reverse_proxy search-1:8000 search-2:8000 {
+		lb_policy least_conn
+		health_uri /ready
+		health_interval 5s
+		health_timeout 3s
+		fail_duration 10s
+		# Retry another copy when one cannot be reached (e.g. just stopped, before the health check notices).
+		lb_try_duration 5s
+	}
+}

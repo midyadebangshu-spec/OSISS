@@ -149,7 +149,7 @@ export function Ingestion() {
           </div>
         </Card>
       </div>
-      <Card title="Jobs (since the server started)">
+      <Card title="Recent jobs">
         {jobs.error && <Alert>{jobs.error}</Alert>}
         {jobs.data && !jobs.data.jobs.length && <p className="text-sm text-slate-500">No jobs yet.</p>}
         {jobs.data && jobs.data.jobs.length > 0 && (
@@ -171,7 +171,10 @@ export function Ingestion() {
                     <JobBadge status={job.status} />
                   </td>
                   <td className="py-2 pr-3 text-xs text-slate-500">{formatTime(job.created_at)}</td>
-                  <td className={`max-w-md py-2 pr-3 text-xs ${job.status === 'failed' ? 'text-rose-700' : 'text-slate-600'}`}>{job.message}</td>
+                  <td className={`max-w-md py-2 pr-3 text-xs ${job.status === 'failed' ? 'text-rose-700' : 'text-slate-600'}`}>
+                    {job.message}
+                    {job.worker && <div className="text-slate-400">on {job.worker}</div>}
+                  </td>
                   <td className="py-2 text-right">
                     {job.status === 'queued' && (
                       <Button

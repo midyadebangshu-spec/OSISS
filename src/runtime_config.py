@@ -13,7 +13,7 @@ import json
 import os
 import threading
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 from urllib.parse import urlparse
 
 from config import settings
@@ -138,51 +138,179 @@ def cors_origin_list() -> List[str]:
     return [item for item in settings.cors_origins.split(",") if item]
 
 
-def _read_file() -> Dict[str, Any]:
-    try:
-        with open(settings.settings_overrides_path, "r", encoding="utf-8") as handle:
-            data = json.load(handle)
-        return data if isinstance(data, dict) else {}
-    except FileNotFoundError:
-        return {}
+class _FileStore:
+    """STATE_BACKEND=local: one JSON file, written atomically."""
+
+    def read(self) -> Tuple[Dict[str, Any], Optional[int]]:
+        try:
+            with open(settings.settings_overrides_path, "r", encoding="utf-8") as handle:
+                data = json.load(handle)
+            return (data if isinstance(data, dict) else {}), None
+        except FileNotFoundError:
+            return {}, None
+
+    def modify(self, change: Callable[[Dict[str, Any]], None]) -> Dict[str, Any]:
+        data, _ = self.read()
+        change(data)
+        path = settings.settings_overrides_path
+        os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
+        tmp = f"{path}.tmp"
+        with open(os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), "w", encoding="utf-8") as handle:
+            json.dump(data, handle, indent=2, sort_keys=True)
+        os.replace(tmp, path)
+        return data
 
 
-def _write_file(data: Dict[str, Any]) -> None:
-    path = settings.settings_overrides_path
-    os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
-    tmp = f"{path}.tmp"
-    with open(os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), "w", encoding="utf-8") as handle:
-        json.dump(data, handle, indent=2, sort_keys=True)
-    os.replace(tmp, path)
+class _PostgresStore:
+    """STATE_BACKEND=postgres: the `server_state` row shared by every API copy.
+
+    `modify` locks the row, so two admins saving at once through different copies never lose a change. The first
+    use imports an existing settings_overrides.json, so switching an install over keeps its settings.
+    """
+
+    def _ensure_row(self, cursor) -> None:
+        cursor.execute("SELECT 1 FROM server_state WHERE id = 1")
+        if cursor.fetchone():
+            return
+        imported, _ = _FileStore().read()
+        cursor.execute(
+            "INSERT INTO server_state (id, data, version) VALUES (1, %s, 1) ON CONFLICT (id) DO NOTHING",
+            (json.dumps(imported),),
+        )
+
+    def read(self) -> Tuple[Dict[str, Any], Optional[int]]:
+        from db_pool import db  # pylint: disable=import-outside-toplevel
+
+        with db() as connection:
+            with connection:
+                with connection.cursor() as cursor:
+                    self._ensure_row(cursor)
+                    cursor.execute("SELECT data, version FROM server_state WHERE id = 1")
+                    data, version = cursor.fetchone()
+        return (data or {}), version
+
+    def version(self) -> Optional[int]:
+        from db_pool import db  # pylint: disable=import-outside-toplevel
+
+        with db() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute("SELECT version FROM server_state WHERE id = 1")
+                row = cursor.fetchone()
+        return row[0] if row else None
+
+    def modify(self, change: Callable[[Dict[str, Any]], None]) -> Dict[str, Any]:
+        from db_pool import db  # pylint: disable=import-outside-toplevel
+
+        with db() as connection:
+            with connection:
+                with connection.cursor() as cursor:
+                    self._ensure_row(cursor)
+                    cursor.execute("SELECT data FROM server_state WHERE id = 1 FOR UPDATE")
+                    data = cursor.fetchone()[0] or {}
+                    change(data)
+                    cursor.execute(
+                        "UPDATE server_state SET data = %s, version = version + 1, updated_at = NOW() "
+                        "WHERE id = 1 RETURNING version",
+                        (json.dumps(data),),
+                    )
+                    global _applied_version  # pylint: disable=global-statement
+                    _applied_version = cursor.fetchone()[0]
+        return data
+
+
+_applied_version: Optional[int] = None
+
+
+def _store():
+    return _PostgresStore() if settings.state_backend == "postgres" else _FileStore()
+
+
+def _apply(data: Dict[str, Any]) -> Tuple[List[str], Dict[str, Any]]:
+    """Set saved values on `settings` and the state dict; returns (warnings, values that changed)."""
+    warnings: List[str] = []
+    changed: Dict[str, Any] = {}
+    for name, value in (data.get("settings") or {}).items():
+        try:
+            coerced = coerce(name, value)
+        except SettingsError as exc:
+            warnings.append(f"Ignored saved setting: {exc}")
+            continue
+        if getattr(settings, name) != coerced:
+            changed[name] = coerced
+        object.__setattr__(settings, name, coerced)
+    _state.clear()
+    _state.update(data.get("state") or {})
+    return warnings, changed
 
 
 def load_overrides() -> List[str]:
     """Apply saved overrides to `settings` (API startup). Returns warnings for skipped entries."""
-    warnings = []
+    global _applied_version  # pylint: disable=global-statement
     with _lock:
-        data = _read_file()
-        for name, value in (data.get("settings") or {}).items():
-            try:
-                object.__setattr__(settings, name, coerce(name, value))
-            except SettingsError as exc:
-                warnings.append(f"Ignored saved setting: {exc}")
-        _state.clear()
-        _state.update(data.get("state") or {})
+        data, version = _store().read()
+        warnings, _ = _apply(data)
+        _applied_version = version
     return warnings
+
+
+def sync_once() -> Dict[str, Any]:
+    """Pick up settings another API copy saved (STATE_BACKEND=postgres). Returns the values that changed."""
+    global _applied_version  # pylint: disable=global-statement
+    if settings.state_backend != "postgres":
+        return {}
+    store = _PostgresStore()
+    if store.version() == _applied_version:
+        return {}
+    with _lock:
+        data, version = store.read()
+        _, changed = _apply(data)
+        _applied_version = version
+    _after_change(changed)
+    for listener in _listeners:
+        listener(changed)
+    return changed
+
+
+_listeners: List[Callable[[Dict[str, Any]], None]] = []
+
+
+def on_sync(listener: Callable[[Dict[str, Any]], None]) -> None:
+    """Call `listener(changed_values)` after settings or state saved elsewhere were applied here."""
+    _listeners.append(listener)
+
+
+def start_sync(stop: threading.Event) -> Optional[threading.Thread]:
+    """Background thread polling for settings changed through other copies (postgres backend only)."""
+    if settings.state_backend != "postgres":
+        return None
+
+    def loop() -> None:
+        while not stop.wait(settings.settings_sync_seconds):
+            try:
+                changed = sync_once()
+                if changed:
+                    print(f"[OSISS] Settings changed on another copy: {', '.join(sorted(changed))}")
+            except Exception as exc:  # pylint: disable=broad-except
+                print(f"[OSISS] Settings sync failed: {exc}")
+
+    thread = threading.Thread(target=loop, name="osiss-settings-sync", daemon=True)
+    thread.start()
+    return thread
 
 
 def update(values: Dict[str, Any]) -> Dict[str, Any]:
     """Validate all values first, then apply and persist them together. Returns the applied values."""
     coerced = {name: coerce(name, value) for name, value in values.items()}
-    with _lock:
-        data = _read_file()
+
+    def change(data: Dict[str, Any]) -> None:
         saved = dict(data.get("settings") or {})
-        for name, value in coerced.items():
-            object.__setattr__(settings, name, value)
-            saved[name] = value
+        saved.update(coerced)
         data["settings"] = saved
-        _write_file(data)
-    _after_change(coerced)
+
+    with _lock:
+        # Apply the whole stored document: it may also hold changes another copy saved since our last sync.
+        _, changed = _apply(_store().modify(change))
+    _after_change({**changed, **coerced})
     return coerced
 
 
@@ -211,13 +339,14 @@ def get_state(key: str, default: Any = None) -> Any:
 
 def set_state(key: str, value: Any) -> None:
     """Persist a piece of server state (e.g. whether the ingester polls) next to the settings."""
-    with _lock:
-        data = _read_file()
+
+    def change(data: Dict[str, Any]) -> None:
         state = dict(data.get("state") or {})
         state[key] = value
         data["state"] = state
-        _write_file(data)
-        _state[key] = value
+
+    with _lock:
+        _apply(_store().modify(change))
 
 
 def describe() -> Dict[str, Any]:

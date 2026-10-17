@@ -7,7 +7,7 @@ import { osiss } from '../lib/bridge.ts'
 import { formatBytes, formatDuration, timeAgo } from '../lib/format.ts'
 import { useAction, useLoader } from '../lib/hooks.ts'
 import { useServer } from '../lib/server.ts'
-import type { SearchMetrics, ServerStatus } from '../lib/types.ts'
+import type { Replica, SearchMetrics, ServerStatus } from '../lib/types.ts'
 
 function seconds(value: number | null | undefined): string {
   if (value === null || value === undefined) return '—'
@@ -24,6 +24,8 @@ function Stat({ label, value, hint }: { label: string; value: ReactNode; hint?: 
   )
 }
 
+const PIPELINE_STAGES = ['load', 'retrieve', 'rerank', 'diversify', 'qa']
+
 const STAGE_SHADES = ['bg-neutral-300', 'bg-neutral-900', 'bg-neutral-500', 'bg-neutral-400', 'bg-neutral-700']
 
 function SearchLoad() {
@@ -31,12 +33,14 @@ function SearchLoad() {
   const metrics = useLoader(() => call<SearchMetrics>({ path: '/api/admin/metrics' }), 5000, [profile.id])
   const data = metrics.data
   if (!data) return metrics.error ? <Alert>{metrics.error}</Alert> : null
-  const stages = Object.entries(data.stage_seconds).filter(([, value]) => value)
+  // In pipeline order (stored JSON from several copies does not keep key order).
+  const stages = PIPELINE_STAGES.filter((stage) => data.stage_seconds[stage]).map((stage) => [stage, data.stage_seconds[stage]] as const)
   const stageTotal = stages.reduce((sum, [, value]) => sum + (value ?? 0), 0)
   const refused = data.refused_rate_limit + data.refused_busy
+  const replicas = data.replicas ?? []
   return (
     <Card
-      title="Search load (last 5 minutes)"
+      title={replicas.length ? `Search load, all copies (last 5 minutes)` : 'Search load (last 5 minutes)'}
       actions={data.waiting > 0 ? <Badge tone="amber">{data.waiting} waiting</Badge> : <Badge tone="green">No queue</Badge>}
     >
       <div className="grid grid-cols-2 gap-4 md:grid-cols-6">
@@ -72,6 +76,7 @@ function SearchLoad() {
           </div>
         </div>
       )}
+      {replicas.length > 0 && <ReplicaTable replicas={replicas} />}
       <div className="mt-3 text-xs text-slate-500">
         Models in {data.limits.model_precision} · rate limit{' '}
         {data.limits.search_rate_limit_per_minute ? `${data.limits.search_rate_limit_per_minute}/min per IP` : 'off'}
@@ -79,6 +84,57 @@ function SearchLoad() {
         under Search settings → Load protection.
       </div>
     </Card>
+  )
+}
+
+function ReplicaTable({ replicas }: { replicas: Replica[] }) {
+  const stale = replicas.filter((item) => !item.alive)
+  return (
+    <div className="mt-4">
+      <div className="mb-1 flex items-center gap-2 text-xs text-slate-500">
+        API copies
+        {stale.length > 0 && <Badge tone="amber">{stale.length} not reporting</Badge>}
+      </div>
+      <table className="w-full text-left text-sm">
+        <thead className="border-b border-slate-200 text-xs uppercase text-slate-500">
+          <tr>
+            <th className="py-1.5 pr-3">Copy</th>
+            <th className="py-1.5 pr-3">Role</th>
+            <th className="py-1.5 pr-3">State</th>
+            <th className="py-1.5 pr-3 text-right">Searches / min</th>
+            <th className="py-1.5 pr-3 text-right">Typical</th>
+            <th className="py-1.5 pr-3 text-right">Running / waiting</th>
+            <th className="py-1.5">Last report</th>
+          </tr>
+        </thead>
+        <tbody>
+          {replicas.map((item) => (
+            <tr key={item.id} className={`border-b border-slate-100 ${item.alive ? '' : 'text-slate-400'}`}>
+              <td className="py-1.5 pr-3 font-medium">
+                {item.id}
+                {item.this && <span className="ml-1 text-xs font-normal text-slate-400">(answered this page)</span>}
+              </td>
+              <td className="py-1.5 pr-3">{item.ingest_worker ? 'search + ingestion' : 'search'}</td>
+              <td className="py-1.5 pr-3">
+                {!item.alive ? <Badge tone="amber">not reporting</Badge> : item.ready ? <Badge tone="green">ready</Badge> : <Badge tone="red">not ready</Badge>}
+              </td>
+              <td className="py-1.5 pr-3 text-right tabular-nums">{item.metrics ? item.metrics.searches_per_minute.toFixed(1) : '—'}</td>
+              <td className="py-1.5 pr-3 text-right tabular-nums">{seconds(item.metrics?.latency_p50)}</td>
+              <td className="py-1.5 pr-3 text-right tabular-nums">
+                {item.metrics ? `${item.metrics.running} / ${item.metrics.waiting}` : '—'}
+              </td>
+              <td className="py-1.5 text-xs">{timeAgo(item.heartbeat_at)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      {stale.length > 0 && (
+        <p className="mt-1 text-xs text-slate-500">
+          A copy that stops reporting has stopped or lost its database connection; the load balancer stops sending it
+          searches once its /ready check fails. Rows disappear after a day.
+        </p>
+      )}
+    </div>
   )
 }
 
@@ -235,15 +291,26 @@ export function Dashboard() {
             <Tile
               icon={<Workflow className="h-4 w-4" />}
               title="Ingester"
-              tone={data.ingester.running ? (data.ingester.current ? 'dark' : 'green') : 'slate'}
-              status={!data.ingester.running ? 'Off' : data.ingester.current ? 'Working' : data.ingester.polling ? 'Polling' : 'Idle'}
+              tone={data.ingester.current ? 'dark' : data.ingester.running || data.ingester.worker_here === false ? 'green' : 'slate'}
+              status={
+                data.ingester.current
+                  ? 'Working'
+                  : data.ingester.worker_here === false
+                    ? 'On the worker'
+                    : !data.ingester.running
+                      ? 'Off'
+                      : data.ingester.polling
+                        ? 'Polling'
+                        : 'Idle'
+              }
             >
-              {data.ingester.running ? (
+              {data.ingester.running || data.ingester.worker_here === false ? (
                 <>
                   <div>{data.ingester.current ? data.ingester.current.label : `${data.ingester.queued ?? 0} job(s) queued`}</div>
                   <div>
                     Polling {data.ingester.polling ? `every ${data.ingester.poll_interval_seconds}s` : 'off'} · last scan {timeAgo(data.ingester.last_scan_at)}
                   </div>
+                  {data.ingester.worker_here === false && <div>This copy only queues jobs; a worker copy runs them.</div>}
                 </>
               ) : (
                 <div>The ingestion worker is not running (ADMIN_TOKEN unset at startup?).</div>
@@ -293,6 +360,20 @@ export function Dashboard() {
                 {!data.access.configured && ' (not chosen yet)'}
               </span>
               <span>Admin IP allowlist: {data.admin_ip_restricted ? 'on' : 'off'}</span>
+              {data.deployment && (
+                <>
+                  <span>
+                    Shared state: <b>{data.deployment.state_backend === 'postgres' ? 'PostgreSQL (several copies)' : 'this process only'}</b>
+                  </span>
+                  <span title={data.deployment.storage_root}>
+                    PDFs: <b>{data.deployment.storage_backend === 's3' ? 'S3' : 'local folder'}</b> ({data.deployment.storage_root})
+                  </span>
+                  <span>Redis: {data.deployment.redis ? 'on' : 'off'}</span>
+                  <span>
+                    This copy: <b>{data.deployment.replica_id}</b> ({data.deployment.ingest_worker ? 'search + ingestion' : 'search only'})
+                  </span>
+                </>
+              )}
               {data.access.public_base_url && <span>Public URL: {data.access.public_base_url}</span>}
             </div>
           </Card>

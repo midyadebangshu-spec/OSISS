@@ -1,0 +1,26 @@
+#!/bin/bash
+# Self-managed Elasticsearch node for OSISS (Amazon Linux 2023), rendered by Terraform.
+set -euo pipefail
+exec > >(tee -a /var/log/osiss-es-boot.log) 2>&1
+
+dnf install -y docker
+systemctl enable --now docker
+
+# Data volume: attached as /dev/sdf (a symlink to the NVMe device on Nitro instances).
+for i in $(seq 1 60); do [ -e /dev/sdf ] && break; sleep 5; done
+blkid /dev/sdf || mkfs.xfs /dev/sdf
+mkdir -p /var/lib/elasticsearch
+grep -q /var/lib/elasticsearch /etc/fstab || echo "UUID=$(blkid -s UUID -o value /dev/sdf) /var/lib/elasticsearch xfs defaults,nofail 0 2" >> /etc/fstab
+mount -a
+chown 1000:1000 /var/lib/elasticsearch
+
+sysctl -w vm.max_map_count=262144
+echo "vm.max_map_count=262144" > /etc/sysctl.d/99-elasticsearch.conf
+
+docker rm -f elasticsearch 2>/dev/null || true
+# Security is off as in docker-compose.yml: the security group admits only the OSISS API instances.
+docker run -d --name elasticsearch --restart unless-stopped -p 9200:9200 \
+  -e discovery.type=single-node -e xpack.security.enabled=false \
+  -e "ES_JAVA_OPTS=-Xms${heap} -Xmx${heap}" \
+  -v /var/lib/elasticsearch:/usr/share/elasticsearch/data \
+  docker.elastic.co/elasticsearch/elasticsearch:8.10.4

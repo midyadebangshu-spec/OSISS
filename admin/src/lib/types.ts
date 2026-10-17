@@ -9,6 +9,34 @@ export type IngesterState = {
   last_scan_at?: number | null
   queued?: number
   current?: Job | null
+  /** False on search-only copies (INGEST_WORKER=false): jobs run on the worker copy. */
+  worker_here?: boolean
+  worker_id?: string
+  running_jobs?: Job[]
+}
+
+export type Deployment = {
+  state_backend: 'local' | 'postgres'
+  storage_backend: 'local' | 's3'
+  storage_root: string
+  redis: boolean
+  ingest_worker: boolean
+  replica_id: string
+  ready: { ready: boolean; checks: Record<string, boolean> }
+}
+
+export type Replica = {
+  id: string
+  started_at: number
+  heartbeat_at: number
+  alive: boolean
+  this: boolean
+  hostname?: string
+  version?: string
+  ingest_worker?: boolean
+  storage_backend?: string
+  ready?: boolean
+  metrics?: SearchMetrics
 }
 
 export type AccessState = {
@@ -29,6 +57,7 @@ export type ServerStatus = {
   ingester: IngesterState
   access: AccessState
   admin_ip_restricted: boolean
+  deployment?: Deployment
   warnings: string[]
 }
 
@@ -76,6 +105,7 @@ export type Job = {
   started_at: number | null
   finished_at: number | null
   book_id: number | null
+  worker?: string | null
 }
 
 export type LogEntry = { seq: number; time: number; message: string }
@@ -139,6 +169,9 @@ export type SearchMetrics = {
     search_cache_ttl_seconds: number
     model_precision: string
   }
+  /** Several copies (STATE_BACKEND=postgres): one row per copy; the numbers above are totals over live copies. */
+  replicas?: Replica[]
+  replica_id?: string
 }
 
 export type ConsoleResult = {

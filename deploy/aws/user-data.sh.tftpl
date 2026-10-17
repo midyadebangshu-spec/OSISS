@@ -1,0 +1,37 @@
+#!/bin/bash
+# OSISS ${role} instance: fetch secrets, then run the API container. Rendered by Terraform; no secrets in here.
+set -euo pipefail
+exec > >(tee -a /var/log/osiss-boot.log) 2>&1
+
+if command -v apt-get >/dev/null 2>&1; then
+  export DEBIAN_FRONTEND=noninteractive
+  command -v docker >/dev/null 2>&1 || { apt-get update -y; apt-get install -y docker.io; }
+  command -v jq >/dev/null 2>&1 || { apt-get update -y; apt-get install -y jq; }
+  command -v aws >/dev/null 2>&1 || snap install aws-cli --classic
+else
+  dnf install -y docker jq
+  command -v aws >/dev/null 2>&1 || dnf install -y awscli-2
+fi
+systemctl enable --now docker
+
+IMDS_TOKEN=$(curl -sS -X PUT http://169.254.169.254/latest/api/token -H "X-aws-ec2-metadata-token-ttl-seconds: 300")
+INSTANCE_ID=$(curl -sS -H "X-aws-ec2-metadata-token: $IMDS_TOKEN" http://169.254.169.254/latest/meta-data/instance-id)
+
+umask 077
+mkdir -p /etc/osiss
+aws secretsmanager get-secret-value --region ${region} --secret-id ${secret_arn} --query SecretString --output text \
+  | jq -r 'to_entries[] | select(.value != "") | "\(.key)=\(.value)"' > /etc/osiss/app.env
+cat >> /etc/osiss/app.env <<'OSISS_ENV'
+${env_lines}
+OSISS_ENV
+echo "REPLICA_ID=${role}-$INSTANCE_ID" >> /etc/osiss/app.env
+
+aws ecr get-login-password --region ${region} | docker login --username AWS --password-stdin ${registry} || true
+until docker pull ${image}; do echo "Image not available yet (push it to ECR); retrying in 60 s"; sleep 60; done
+
+docker rm -f osiss 2>/dev/null || true
+docker run -d --name osiss --restart unless-stopped %{ if gpu }--gpus all %{ endif }-p 8000:8000 \
+  --env-file /etc/osiss/app.env \
+  --log-driver awslogs --log-opt awslogs-region=${region} \
+  --log-opt awslogs-group=${log_group} --log-opt awslogs-stream=${role}-$INSTANCE_ID \
+  ${image}

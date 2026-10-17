@@ -9,6 +9,9 @@ from config import settings
 
 
 POSTGRES_SCHEMA_SQL = """
+-- Several API copies may start at once: serialise schema changes (concurrent CREATE ... IF NOT EXISTS can fail).
+SELECT pg_advisory_xact_lock(7051156);
+
 CREATE TABLE IF NOT EXISTS books (
     id SERIAL PRIMARY KEY,
     title TEXT NOT NULL,
@@ -60,6 +63,56 @@ CREATE TABLE IF NOT EXISTS api_clients (
     last_used_at TIMESTAMPTZ,
     request_count BIGINT NOT NULL DEFAULT 0
 );
+
+-- Shared by all API copies when STATE_BACKEND=postgres (README "Running several copies").
+-- One row: admin-app settings + server state (`version` goes up on every change) and the corpus version
+-- (goes up whenever books change, so every copy drops its cached answers).
+CREATE TABLE IF NOT EXISTS server_state (
+    id SMALLINT PRIMARY KEY CHECK (id = 1),
+    data JSONB NOT NULL DEFAULT '{}'::jsonb,
+    version BIGINT NOT NULL DEFAULT 0,
+    corpus_version BIGINT NOT NULL DEFAULT 0,
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS ingest_jobs (
+    seq BIGSERIAL PRIMARY KEY,
+    id TEXT NOT NULL UNIQUE,
+    kind TEXT NOT NULL,
+    label TEXT NOT NULL,
+    status TEXT NOT NULL,
+    message TEXT NOT NULL DEFAULT '',
+    params JSONB NOT NULL DEFAULT '{}'::jsonb,
+    book_id INT,
+    worker TEXT,
+    created_at DOUBLE PRECISION NOT NULL,
+    started_at DOUBLE PRECISION,
+    finished_at DOUBLE PRECISION
+);
+CREATE INDEX IF NOT EXISTS idx_ingest_jobs_status ON ingest_jobs(status, seq);
+
+CREATE TABLE IF NOT EXISTS ingest_log (
+    seq BIGSERIAL PRIMARY KEY,
+    time DOUBLE PRECISION NOT NULL,
+    message TEXT NOT NULL,
+    worker TEXT
+);
+
+CREATE TABLE IF NOT EXISTS admin_auth_failures (
+    address TEXT NOT NULL,
+    at DOUBLE PRECISION NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_admin_auth_failures ON admin_auth_failures(address, at);
+
+CREATE TABLE IF NOT EXISTS replicas (
+    id TEXT PRIMARY KEY,
+    started_at DOUBLE PRECISION NOT NULL,
+    heartbeat_at DOUBLE PRECISION NOT NULL,
+    info JSONB NOT NULL DEFAULT '{}'::jsonb
+);
+
+-- For S3 storage: the object's ETag when it was ingested, so the poller does not download unchanged files.
+ALTER TABLE books ADD COLUMN IF NOT EXISTS source_version TEXT;
 """
 
 
@@ -124,7 +177,14 @@ def init_elasticsearch() -> None:
         print(f"[OSISS] Elasticsearch index '{index_name}' already exists (mapping up to date).")
         return
 
-    client.indices.create(index=index_name, body=mapping)
+    try:
+        client.indices.create(index=index_name, body=mapping)
+    except Exception as exc:  # pylint: disable=broad-except
+        # Another copy created it in the meantime.
+        if "resource_already_exists_exception" not in str(exc):
+            raise
+        print(f"[OSISS] Elasticsearch index '{index_name}' was just created by another process.")
+        return
     print(f"[OSISS] Elasticsearch index '{index_name}' created.")
 
 

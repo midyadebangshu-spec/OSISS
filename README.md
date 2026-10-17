@@ -10,6 +10,11 @@ This document describes the whole project: what it is made of, how a query flows
 step, every improvement that was tried (with measured results and graphs, including the ideas that did *not* work),
 and what is still weak.
 
+> **Setting OSISS up?** You do not need sections 2–9 to run it. Install the prerequisites and get the code
+> ([section 10](#10-setup-and-usage)), then follow the setup that fits you in [section 11](#11-using-the-admin-app-step-by-step):
+> one computer, a campus network, or a public website. For heavy use, see [11.8](#118-capacity-and-load) and
+> [11.9](#119-running-several-copies) (several copies, or AWS).
+
 ## Contents
 
 1. [At a glance](#1-at-a-glance)
@@ -580,27 +585,76 @@ Each row is a different question set, so the rows are not directly comparable; t
 
 ## 10. Setup and usage
 
+### What you need
+
+| | Minimum | Notes |
+|---|---|---|
+| **Operating system** | Ubuntu 22.04 or 24.04 (other Linux works), or macOS | Windows is not supported for the server (WSL 2 with Ubuntu may work but is untested). The admin app also has a Windows build. |
+| **Memory** | 16 GB RAM | Elasticsearch takes 1 GB, and the three models are loaded into memory or GPU memory. |
+| **Disk** | about 40 GB free | Models 12 GB, Python packages (PyTorch) about 6 GB, Docker images, the PDFs and the search index. |
+| **GPU** | optional | An NVIDIA GPU makes search much faster. The numbers in this README come from an RTX 3060 with 12 GB (2–4 s per question). Without one (and on every Mac) the models run on the CPU, which works but takes many times longer per question; measure it with the load test in [11.8](#118-capacity-and-load). |
+| **Internet** | during setup only | `setup.sh` downloads Python packages, Docker images and the models (about 12 GB from Hugging Face). After that OSISS runs offline. |
+
 ### Prerequisites
 
-* Linux or macOS with Python 3.10+ (3.12 used here), Docker with the Compose plugin, Node.js 20.19+ or 22.12+ with npm, and Tesseract OCR with the `eng`, `ben` and `hin` language packs.
-* A GPU is optional (`INFERENCE_DEVICE=cpu` works, slowly). The models need about 12 GB of disk.
+Python 3.10+, Docker with the Compose plugin, Node.js 22.12+ (or 20.19+), Git and Tesseract OCR with the English, Bengali and
+Hindi language packs. `setup.sh` checks them and stops with a message if one is missing.
+
+**Ubuntu** (as a user who may use `sudo`):
+
+```bash
+sudo apt-get update
+sudo apt-get install -y git curl python3 python3-venv python3-pip \
+  tesseract-ocr tesseract-ocr-eng tesseract-ocr-ben tesseract-ocr-hin wamerican
+
+# Docker Engine with the Compose plugin (https://docs.docker.com/engine/install/ubuntu/)
+curl -fsSL https://get.docker.com | sudo sh
+sudo usermod -aG docker "$USER"      # then log out and in again, so you can use Docker without sudo
+
+# Node.js 22 (the nodejs package that ships with Ubuntu is too old for the website)
+curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
+sudo apt-get install -y nodejs
+```
+
+With an NVIDIA GPU, also install its driver (`sudo ubuntu-drivers install`, then reboot) and check that `nvidia-smi` lists the
+card. Nothing else is needed: the PyTorch package that `setup.sh` installs brings its own CUDA libraries.
+
+**macOS** (with [Homebrew](https://brew.sh)): `brew install git python node tesseract tesseract-lang`, and install
+[Docker Desktop](https://www.docker.com/products/docker-desktop/) and start it.
+
+### Get the code
+
+```bash
+git clone https://github.com/midyadebangshu-spec/OSISS.git
+cd OSISS
+```
+
+(Or unpack a copy of the repository you were given, and `cd` into it.)
 
 ### Quick start
 
+The shortest way to try it on your own computer. For a setup that other people will use, follow
+[section 11](#11-using-the-admin-app-step-by-step) instead.
+
 ```bash
-./setup.sh                 # venv, Python deps, Docker (Postgres + Elasticsearch), schema, models, frontend deps
+./setup.sh                 # checks prerequisites; venv, Python deps, Docker (Postgres + Elasticsearch), schema, models, frontend deps
 # put PDFs in data/pdfs/
 ./ingestion.sh --once      # ingest new or changed PDFs (omit --once to keep watching)
-.venv/bin/python src/build_english_vocab.py   # refresh the English word list used for romanized-query detection
+.venv/bin/python src/build_english_vocab.py   # refresh the English word list from the ingested books
 ./api.sh                   # FastAPI on :8000
 cd frontend && npm run dev # UI on http://localhost:5173 (proxies /api, /health, /data to :8000)
 ```
 
-`setup.sh` also installs the system packages (`tesseract-ocr-eng`, `-ben`, `-hin`) when `apt-get` is available. If it cannot, install them yourself:
+`setup.sh` is safe to run again; it skips work that is already done. When system packages are missing it installs them itself
+if it can (with `apt-get` as root or a user with `sudo`, or with Homebrew); otherwise it prints the command an administrator
+should run, and carries on.
 
-```bash
-sudo apt install tesseract-ocr tesseract-ocr-eng tesseract-ocr-ben tesseract-ocr-hin
-```
+**The English word list.** OSISS tells an English question from romanized Bengali/Hindi ("goti kake bole") and mixed questions
+("what is gati") with a list of English words, `models/english_vocab.txt`. `setup.sh` builds a first one from the system
+dictionary. Rebuild it after ingesting English books (`.venv/bin/python src/build_english_vocab.py`) and restart the API, which
+reads it at startup. Without the list, every Latin-script question that has no Bengali/Hindi marker word is treated as English,
+so mixed questions are never transliterated (in [8.5](#85-ambiguous-and-mixed-queries-confidence-fallback), mixed questions
+drop from 0.90 to 0.50 hit@3 that way).
 
 ### Common commands
 
@@ -699,8 +753,9 @@ From now on the app asks for the passkey every time it opens (and after 15 minut
 
 Use this to try OSISS, or when only the people at one computer will search.
 
-1. **Install the server:** in the OSISS folder run `./setup.sh`. Among other things it writes a random `ADMIN_TOKEN` into `.env`.
-   That token is what lets the admin app control the server.
+1. **Install the server:** install the prerequisites and get the code ([section 10](#10-setup-and-usage)), then run `./setup.sh`
+   in the OSISS folder. Among other things it writes a random `ADMIN_TOKEN` into `.env`. That token is what lets the admin
+   app control the server.
 2. **Add your PDFs (optional now):** copy them into `data/pdfs/`. You can also add them later from the app (see
    [11.6.2](#1162-add-a-book)).
 3. **Start the API once by hand to check it:** `./api.sh`. Later you can start and stop it from the app's Dashboard instead.
@@ -728,6 +783,8 @@ Use this to try OSISS, or when only the people at one computer will search.
 
 10. **Ingest the PDFs:** open **Ingestion & jobs** and click **Scan now**, or switch on **Poll the PDF folder** so new files in
     `data/pdfs/` are picked up every few seconds. Then fix the guessed titles ([11.6.1](#1161-fix-a-guessed-title)).
+    When the first ingestion has finished, refresh the English word list with `.venv/bin/python src/build_english_vocab.py`
+    and restart the API (**Stop API**, **Start API**); see [section 10](#10-setup-and-usage) for why.
 11. **Search:** run the website with `cd frontend && npm run dev` and open <http://localhost:5173>. Or build it once
     (`npm run build`), add `SERVE_FRONTEND=true` to `.env`, restart the API and open <http://localhost:8000>.
 
@@ -737,7 +794,15 @@ One machine runs OSISS for everyone on the campus network; an admin manages it f
 
 **On the server**
 
-1. Install OSISS and run `./setup.sh`, then ingest the PDFs (`./ingestion.sh --once`, or later from the app).
+1. Install the prerequisites, get the code and run `./setup.sh` ([section 10](#10-setup-and-usage)). Copy the PDFs into
+   `data/pdfs/` and ingest them, then refresh the English word list:
+
+   ```bash
+   ./ingestion.sh --once
+   .venv/bin/python src/build_english_vocab.py
+   ```
+
+   You can also add books later from the app.
 2. Serve the website from the API so students only need a browser:
 
    ```bash
@@ -782,13 +847,14 @@ only work for *This computer* servers. Everything else in the app works the same
 This makes search available to everyone on the internet at an address such as `https://ossis.com`. You need:
 
 * **A domain you own.** Check that the name is free and register it.
-* **A server that is always on**, with a public IP address. It can be your own machine or a cloud VM. It needs enough memory for the
-  models (16 GB RAM or more; a GPU makes searches much faster).
+* **A server that is always on**, with a public IP address. It can be your own machine or a cloud VM. See
+  [What you need](#what-you-need) for memory, disk and GPU (16 GB RAM or more; a GPU makes searches much faster).
 * **Ports 80 and 443 open** to the internet (for HTTPS) and port 22 for SSH. Nothing else.
 
 **On the server** (Ubuntu shown; run as a user with `sudo`)
 
-1. Create a user and install OSISS in `/opt/OSISS`:
+1. Install the prerequisites with the **Ubuntu** commands in [section 10](#prerequisites) (and the GPU driver if the server has a
+   GPU). Then create a user without `sudo` rights that runs OSISS, and install OSISS in `/opt/OSISS`:
 
    ```bash
    sudo useradd -m -s /bin/bash osiss && sudo usermod -aG docker osiss
@@ -796,10 +862,21 @@ This makes search available to everyone on the internet at an address such as `h
    sudo -iu osiss bash -c 'cd /opt/OSISS && ./setup.sh'
    ```
 
+   `setup.sh` finds the system packages already installed, so the `osiss` user never needs `sudo`.
    `docker-compose.yml` publishes PostgreSQL and Elasticsearch on `127.0.0.1` only, so they are never reachable from the internet
    even though Docker bypasses host firewalls.
 2. Build the website: `sudo -iu osiss bash -c 'cd /opt/OSISS/frontend && npm run build'`.
-3. Install the API service. `deploy/osiss-api.service` already sets `API_HOST=127.0.0.1` (only the proxy on this machine may reach
+3. **Add the books.** Copy the PDFs to the server (for example with `scp` into your home folder), then move them into the library,
+   ingest them and refresh the English word list:
+
+   ```bash
+   sudo cp ~/pdfs/*.pdf /opt/OSISS/data/pdfs/ && sudo chown -R osiss: /opt/OSISS/data/pdfs
+   sudo -iu osiss bash -c 'cd /opt/OSISS && ./ingestion.sh --once && .venv/bin/python src/build_english_vocab.py'
+   ```
+
+   You can skip this and upload books from the admin app later ([11.6.2](#1162-add-a-book)). Ingesting before the API service
+   starts keeps the two from competing for GPU memory.
+4. Install the API service. `deploy/osiss-api.service` already sets `API_HOST=127.0.0.1` (only the proxy on this machine may reach
    the API) and `SERVE_FRONTEND=true`:
 
    ```bash
@@ -808,9 +885,9 @@ This makes search available to everyone on the internet at an address such as `h
    curl http://127.0.0.1:8000/health          # {"status":"ok",...}
    ```
 
-4. **DNS:** at your domain registrar, create an `A` record for `ossis.com` (and `www` if you want it) pointing to the server's
+5. **DNS:** at your domain registrar, create an `A` record for `ossis.com` (and `www` if you want it) pointing to the server's
    public IP. Wait until `ping ossis.com` shows that IP.
-5. **HTTPS with Caddy:** install Caddy (<https://caddyserver.com/docs/install>), then:
+6. **HTTPS with Caddy:** install Caddy (<https://caddyserver.com/docs/install>), then:
 
    ```bash
    sudo cp /opt/OSISS/deploy/Caddyfile.example /etc/caddy/Caddyfile
@@ -821,17 +898,17 @@ This makes search available to everyone on the internet at an address such as `h
    Caddy gets and renews the HTTPS certificate on its own. The example also answers `403` to `/api/admin/*` from any other address,
    so the admin API is not exposed to the internet. Remove that block if admins connect from changing addresses (the token and its
    lockout still protect it).
-6. **Firewall:** `sudo ufw allow 22,80,443/tcp && sudo ufw enable`.
-7. Open `https://ossis.com` in a browser: the search page should load and answer questions.
+7. **Firewall:** `sudo ufw allow 22,80,443/tcp && sudo ufw enable`.
+8. Open `https://ossis.com` in a browser: the search page should load and answer questions.
 
 **On the admin PC**
 
-8. In the app, **Add server** with *Elsewhere*, URL `https://ossis.com` and the token from `/opt/OSISS/.env`. Leave
+9. In the app, **Add server** with *Elsewhere*, URL `https://ossis.com` and the token from `/opt/OSISS/.env`. Leave
    *Allow plain http://* unticked. **Save & test connection**.
-9. In **Access & API keys**, decide who may search ([11.6.7](#1167-choose-who-may-search-and-give-apps-api-keys)) and enter
-   `https://ossis.com` as **Public URL of this server**, so PDF links in API results are complete addresses that apps can open.
-   If the website is hosted somewhere else than this server, add that site's address under **Website domains**.
-10. Give each app that should use the search its own API key (also [11.6.7](#1167-choose-who-may-search-and-give-apps-api-keys)).
+10. In **Access & API keys**, decide who may search ([11.6.7](#1167-choose-who-may-search-and-give-apps-api-keys)) and enter
+    `https://ossis.com` as **Public URL of this server**, so PDF links in API results are complete addresses that apps can open.
+    If the website is hosted somewhere else than this server, add that site's address under **Website domains**.
+11. Give each app that should use the search its own API key (also [11.6.7](#1167-choose-who-may-search-and-give-apps-api-keys)).
 
 Before going public, consider:
 
@@ -870,7 +947,8 @@ PDF** shows the book to check its cover.
 
 The PDF is copied to the server's `data/pdfs/` and ingested with the details you entered. Scanned or legacy-font Bengali/Hindi books
 are OCRed, which can take several minutes. You can close the window: the job continues on the server and appears under
-**Ingestion & jobs**. Uploading a PDF that is already in the library is refused.
+**Ingestion & jobs**. Uploading a PDF that is already in the library is refused. After adding English books, refresh the
+English word list on the server and restart the API ([section 10](#10-setup-and-usage)).
 
 <img src="docs/images/admin/upload-done.png" width="720" alt="Upload finished">
 
@@ -897,7 +975,7 @@ The **Ingestion & jobs** page has these controls:
 * **Scan now:** runs that check once.
 * **Maintenance:** runs the upgrade and repair scripts (*Update database schema*, *Re-index language fields*, *Re-apply exercise
   flags*). Run them after upgrading OSISS when the release notes say so.
-* **Jobs:** lists everything queued or done since the server started. A queued job can be cancelled.
+* **Recent jobs:** lists what is queued, running or done. A queued job can be cancelled.
 * **Live log:** shows the progress, including OCR.
 
 <img src="docs/images/admin/ingestion.png" width="720" alt="Ingestion, jobs and live log">
@@ -1100,7 +1178,9 @@ load balancer's address, so rate limits and the admin lockout see the visitors' 
 traffic only to copies whose `GET /ready` answers 200.
 
 **Option 1: one machine with several GPUs.** `deploy/docker-compose.replicas.yml` runs a worker and two search copies
-(one GPU each) with PostgreSQL, Elasticsearch, optional Redis and Caddy in front:
+(one GPU each) with PostgreSQL, Elasticsearch, optional Redis and Caddy in front. Besides the NVIDIA driver, Docker needs
+the [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html)
+to give the containers a GPU (`docker run --rm --gpus all ubuntu nvidia-smi` must list the cards):
 
 ```bash
 cp deploy/replicas.env.example deploy/replicas.env          # set ADMIN_TOKEN, POSTGRES_PASSWORD, OSISS_SITE, ...
@@ -1371,6 +1451,8 @@ Running the evaluation while the API server is up can run out of GPU memory on a
 
 ## 15. Troubleshooting
 
+* **`setup.sh` stops with "ERROR: ...":** a prerequisite is missing or too old; install it as shown in [section 10](#prerequisites) and run `./setup.sh` again.
+* **`setup.sh` warns that this user cannot install system packages:** run the `sudo apt-get install ...` line it prints as a user with `sudo`, then run `./setup.sh` again.
 * **Docker permission denied:** add your user to the `docker` group and log in again, or run setup with sudo.
 * **Missing Python modules when running scripts:** use the wrappers (`./ingestion.sh`, `./api.sh`) or activate `.venv`.
 * **Stale API behaviour:** `pkill -f "uvicorn src.api_server:app" || true && ./api.sh`.
@@ -1378,6 +1460,7 @@ Running the evaluation while the API server is up can run out of GPU memory on a
 * **Frontend build fails with `CustomEvent is not defined`:** Node is too old for Vite 8; use Node 20.19+ or 22.12+.
 * **Garbage Bengali/Hindi text after ingestion:** the OCR language packs are missing (`tesseract --list-langs` must show `ben` and `hin`), or `OCR_FALLBACK=false`.
 * **Romanized queries behave like English:** the transliteration model is missing (`python src/download_models.py`) or `TRANSLIT_ENABLED=false`.
+* **Mixed questions ("what is gati") find nothing useful:** the English word list is missing or stale; run `.venv/bin/python src/build_english_vocab.py` and restart the API.
 * **Admin app says "Admin API is disabled":** set `ADMIN_TOKEN` in `.env` and restart `./api.sh`.
 * **Admin app gets 429:** too many wrong admin tokens from that address; wait 15 minutes or fix the token under *Servers*.
 * **Behind a reverse proxy, `ADMIN_ALLOWED_IPS` sees the proxy's address:** uvicorn only trusts `X-Forwarded-For` from `127.0.0.1` by default (`FORWARDED_ALLOW_IPS`).

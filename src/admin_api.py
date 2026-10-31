@@ -15,10 +15,11 @@ import shutil
 import threading
 import time
 from collections import defaultdict, deque
+from urllib.parse import quote
 from typing import Any, Deque, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
 import admin
@@ -83,7 +84,52 @@ class AuthFailures:
             self._failures.pop(address, None)
 
 
+class PostgresAuthFailures:
+    """Wrong-token attempts shared by all API copies (STATE_BACKEND=postgres), so the lockout cannot be dodged by
+    landing on another copy. A database error lets the check pass: the token itself is still required."""
+
+    def _query(self, sql: str, params=(), fetch: bool = False):
+        with db() as connection:
+            with connection:
+                with connection.cursor() as cursor:
+                    cursor.execute(sql, params)
+                    return cursor.fetchall() if fetch else None
+
+    def blocked_for(self, address: str) -> float:
+        now = time.time()
+        try:
+            rows = self._query(
+                "SELECT at FROM admin_auth_failures WHERE address = %s AND at > %s ORDER BY at DESC LIMIT %s",
+                (address, now - AUTH_WINDOW_SECONDS, MAX_AUTH_FAILURES), fetch=True,
+            )
+        except Exception:  # pylint: disable=broad-except
+            return 0.0
+        if len(rows) < MAX_AUTH_FAILURES:
+            return 0.0
+        return rows[-1][0] + AUTH_WINDOW_SECONDS - now
+
+    def record(self, address: str) -> None:
+        now = time.time()
+        try:
+            self._query("INSERT INTO admin_auth_failures (address, at) VALUES (%s, %s)", (address, now))
+            self._query("DELETE FROM admin_auth_failures WHERE at < %s", (now - AUTH_WINDOW_SECONDS,))
+        except Exception as exc:  # pylint: disable=broad-except
+            print(f"[OSISS] Could not record a failed admin login: {exc}")
+
+    def clear(self, address: str) -> None:
+        try:
+            self._query("DELETE FROM admin_auth_failures WHERE address = %s", (address,))
+        except Exception:  # pylint: disable=broad-except
+            pass
+
+
 auth_failures = AuthFailures()
+
+
+def configure() -> None:
+    """Share the wrong-token lockout between copies when STATE_BACKEND=postgres (API startup)."""
+    global auth_failures  # pylint: disable=global-statement
+    auth_failures = PostgresAuthFailures() if settings.state_backend == "postgres" else AuthFailures()
 
 
 def allowed_networks() -> List[Any]:
@@ -156,7 +202,9 @@ def _elasticsearch_status() -> Dict[str, Any]:
     from elasticsearch import Elasticsearch  # pylint: disable=import-outside-toplevel
 
     try:
-        client = Elasticsearch(settings.elasticsearch_url, request_timeout=3)
+        from clients import elasticsearch_kwargs  # pylint: disable=import-outside-toplevel
+
+        client = Elasticsearch(settings.elasticsearch_url, request_timeout=3, **elasticsearch_kwargs())
         health = client.cluster.health(request_timeout=3)
         index = settings.elasticsearch_index
         exists = bool(client.indices.exists(index=index))
@@ -223,6 +271,25 @@ def _disk_status() -> Dict[str, Any]:
     return {"path": os.path.abspath(path), "total": usage.total, "used": usage.used, "free": usage.free}
 
 
+def _deployment() -> Dict[str, Any]:
+    import replica  # pylint: disable=import-outside-toplevel
+    from storage import get_storage  # pylint: disable=import-outside-toplevel
+
+    try:
+        root = get_storage().root
+    except Exception as exc:  # pylint: disable=broad-except
+        root = f"unavailable: {exc}"
+    return {
+        "state_backend": settings.state_backend,
+        "storage_backend": settings.storage_backend,
+        "storage_root": root,
+        "redis": bool(settings.redis_url),
+        "ingest_worker": settings.ingest_worker,
+        "replica_id": replica.replica_id(),
+        "ready": replica.readiness(),
+    }
+
+
 @router.get("/status")
 def status() -> Dict[str, Any]:
     warnings = []
@@ -247,6 +314,7 @@ def status() -> Dict[str, Any]:
             "public_base_url": settings.public_base_url,
         },
         "admin_ip_restricted": bool(settings.admin_allowed_ips.strip()),
+        "deployment": _deployment(),
         "warnings": warnings,
     }
 
@@ -291,7 +359,7 @@ def update_book(book_id: int, patch: MetadataPatch) -> Dict[str, Any]:
             )
     except admin.AdminError as exc:
         _fail(exc)
-    load_control.cache.invalidate()  # cached answers carry the old title / author
+    load_control.corpus_changed()  # cached answers carry the old title / author
     return book
 
 
@@ -308,7 +376,7 @@ def delete_book(book_id: int) -> Dict[str, Any]:
         _fail(exc)
     except ingest.IngestBusy as exc:
         raise HTTPException(409, str(exc)) from exc
-    load_control.cache.invalidate()
+    load_control.corpus_changed()
     return {"deleted": book_id, "file_path": book["file_path"], "file_kept": True}
 
 
@@ -347,7 +415,17 @@ def book_pdf(book_id: int):
         _fail(exc)
     if not book["file_exists"]:
         raise HTTPException(404, "PDF file is missing on the server.")
-    return FileResponse(book["file_path"], media_type="application/pdf", filename=os.path.basename(book["file_path"]))
+    from storage import get_storage, is_s3_path  # pylint: disable=import-outside-toplevel
+
+    name = os.path.basename(book["file_path"])
+    if is_s3_path(book["file_path"]):
+        # Streamed rather than redirected: the admin app refuses redirects so its token never follows one.
+        chunks, size = get_storage().stream(book["file_path"])
+        headers = {"Content-Disposition": f"attachment; filename*=UTF-8''{quote(name)}"}
+        if size is not None:
+            headers["Content-Length"] = str(size)
+        return StreamingResponse(chunks, media_type="application/pdf", headers=headers)
+    return FileResponse(book["file_path"], media_type="application/pdf", filename=name)
 
 
 @router.get("/metadata-guess")
@@ -375,8 +453,10 @@ def upload_book(
     except admin.AdminError as exc:
         _fail(exc)
 
-    os.makedirs(settings.upload_dir, exist_ok=True)
-    staged = os.path.join(settings.upload_dir, f".upload-{os.urandom(8).hex()}.pdf")
+    from storage import get_storage  # pylint: disable=import-outside-toplevel
+
+    storage = get_storage()
+    staged = storage.new_staging_file()
     digest = hashlib.sha256()
     size, limit = 0, settings.upload_max_mb * 1024 * 1024
     try:
@@ -405,6 +485,8 @@ def upload_book(
         if os.path.exists(staged):
             os.remove(staged)
         raise
+    # Local storage: the file already is in UPLOAD_DIR. S3: it goes to the staging prefix, reachable by any worker.
+    staged = storage.stage(staged, file_hash)
 
     job = _worker().submit(
         "upload", f"Upload '{metadata['title']}'", staged_path=staged, file_name=file_name, file_hash=file_hash,
@@ -577,8 +659,22 @@ class ConsoleSearch(BaseModel):
 
 @router.get("/metrics")
 def search_metrics() -> Dict[str, Any]:
-    """Search load of the last five minutes (Dashboard "Search load" tile)."""
-    return load_control.metrics.snapshot(load_control.gate(), load_control.cache)
+    """Search load of the last five minutes (Dashboard "Search load" card).
+
+    With several copies (STATE_BACKEND=postgres) the top-level numbers are totals over the live copies and
+    `replicas` lists each copy; otherwise they are this process's own numbers.
+    """
+    import replica  # pylint: disable=import-outside-toplevel
+
+    here = load_control.metrics.snapshot(load_control.gate(), load_control.cache)
+    if settings.state_backend != "postgres":
+        return {**here, "replicas": [], "replica_id": replica.replica_id()}
+    try:
+        replica.beat()  # include this copy's latest numbers
+        replicas = replica.list_replicas()
+    except Exception as exc:  # pylint: disable=broad-except
+        return {**here, "replicas": [], "replica_id": replica.replica_id(), "replicas_error": str(exc)}
+    return {**here, **replica.aggregate(replicas), "replicas": replicas, "replica_id": replica.replica_id()}
 
 
 @router.post("/search")

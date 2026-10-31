@@ -19,9 +19,18 @@ class Settings:
     postgres_db: str = os.getenv("POSTGRES_DB", "osiss")
     postgres_user: str = os.getenv("POSTGRES_USER", "osiss")
     postgres_password: str = os.getenv("POSTGRES_PASSWORD", "osiss")
+    # e.g. "require" or "verify-full" for a managed database (RDS); empty = libpq default.
+    postgres_sslmode: str = os.getenv("POSTGRES_SSLMODE", "")
+    postgres_sslrootcert: str = os.getenv("POSTGRES_SSLROOTCERT", "")
 
     elasticsearch_url: str = os.getenv("ELASTICSEARCH_URL", "http://localhost:9200")
     elasticsearch_index: str = os.getenv("ELASTICSEARCH_INDEX", "osiss_chunks")
+    # Authentication for a secured cluster (e.g. Elastic Cloud): an API key, or user name + password.
+    elasticsearch_api_key: str = os.getenv("ELASTICSEARCH_API_KEY", "")
+    elasticsearch_username: str = os.getenv("ELASTICSEARCH_USERNAME", "")
+    elasticsearch_password: str = os.getenv("ELASTICSEARCH_PASSWORD", "")
+    elasticsearch_ca_certs: str = os.getenv("ELASTICSEARCH_CA_CERTS", "")
+    elasticsearch_verify_certs: bool = os.getenv("ELASTICSEARCH_VERIFY_CERTS", "true").lower() in {"1", "true", "yes"}
 
     models_dir: str = os.getenv("MODELS_DIR", "./models")
     bge_model_path: str = os.getenv("BGE_MODEL_PATH", "./models/BAAI_bge-m3")
@@ -121,6 +130,34 @@ class Settings:
     public_base_url: str = os.getenv("PUBLIC_BASE_URL", "")
     # Serve the built web frontend (frontend/dist) at / from the API process.
     serve_frontend: bool = os.getenv("SERVE_FRONTEND", "false").lower() in {"1", "true", "yes"}
+
+    # Running several API copies (README "Running several copies").
+    # "local": one API process; settings in SETTINGS_OVERRIDES_PATH, jobs/log/lockouts/metrics in memory (default).
+    # "postgres": all of that shared through PostgreSQL, so copies behind a load balancer agree.
+    state_backend: str = os.getenv("STATE_BACKEND", "local").lower()
+    # How often a copy checks PostgreSQL for settings changed through another copy.
+    settings_sync_seconds: float = float(os.getenv("SETTINGS_SYNC_SECONDS", "5"))
+    # Whether this process runs ingestion jobs and folder polling. Turn off on search-only copies.
+    ingest_worker: bool = os.getenv("INGEST_WORKER", "true").lower() in {"1", "true", "yes"}
+    # Name shown for this copy in the admin app (default: host name and process id).
+    replica_id: str = os.getenv("REPLICA_ID", "")
+    replica_heartbeat_seconds: float = float(os.getenv("REPLICA_HEARTBEAT_SECONDS", "15"))
+    # Load the models and check Elasticsearch at startup, so /ready turns 200 before the first visitor.
+    warmup_on_start: bool = os.getenv("WARMUP_ON_START", "false").lower() in {"1", "true", "yes"}
+    # Optional Redis for an answer cache and exact rate limits shared by all copies (e.g. redis://host:6379/0).
+    redis_url: str = os.getenv("REDIS_URL", "")
+
+    # Where PDFs live: "local" (PDF_DIR / UPLOAD_DIR; may be a shared NFS/EFS mount) or "s3".
+    storage_backend: str = os.getenv("STORAGE_BACKEND", "local").lower()
+    s3_bucket: str = os.getenv("S3_BUCKET", "")
+    s3_prefix: str = os.getenv("S3_PREFIX", "pdfs/")
+    s3_upload_prefix: str = os.getenv("S3_UPLOAD_PREFIX", "uploads/")
+    s3_region: str = os.getenv("S3_REGION", "")
+    # For S3-compatible stores (MinIO, ...); empty = AWS.
+    s3_endpoint_url: str = os.getenv("S3_ENDPOINT_URL", "")
+    # S3 PDFs: "redirect" to a short-lived signed URL (default) or "proxy" (stream through the API).
+    pdf_serve_mode: str = os.getenv("PDF_SERVE_MODE", "redirect").lower()
+    s3_url_expiry_seconds: int = int(os.getenv("S3_URL_EXPIRY_SECONDS", "900"))
 
 
 settings = Settings()

@@ -10,6 +10,11 @@ This document describes the whole project: what it is made of, how a query flows
 step, every improvement that was tried (with measured results and graphs, including the ideas that did *not* work),
 and what is still weak.
 
+> **Setting OSISS up?** You do not need sections 2–9 to run it. Install the prerequisites and get the code
+> ([section 10](#10-setup-and-usage)), then follow the setup that fits you in [section 11](#11-using-the-admin-app-step-by-step):
+> one computer, a campus network, or a public website. For heavy use, see [11.8](#118-capacity-and-load) and
+> [11.9](#119-running-several-copies) (several copies, or AWS).
+
 ## Contents
 
 1. [At a glance](#1-at-a-glance)
@@ -223,6 +228,7 @@ Every step names the setting that controls it (see [section 12](#12-configuratio
 | `GET /health` | liveness check (`{status, version, admin_enabled}`) |
 | `POST /api/search` `{query, top_k}` | returns `{exact_quote, book_title, author, department, page_number, pdf_link, paragraph_text, answer_text}` per result |
 | `GET /data/pdfs/<file>.pdf` | PDFs from `PDF_DIR` only (opened by the page viewer at `#page=N`) |
+| `GET /ready` | load-balancer health check: 200 when this copy can answer searches, else 503 with the failing check |
 | `/api/admin/*` | admin API for the desktop admin app, behind `ADMIN_TOKEN` (see [section 11](#11-using-the-admin-app-step-by-step)) |
 
 `/api/search` and `/data` follow the search access mode chosen in the admin app: **open** (anyone who can reach the server) or
@@ -579,27 +585,76 @@ Each row is a different question set, so the rows are not directly comparable; t
 
 ## 10. Setup and usage
 
+### What you need
+
+| | Minimum | Notes |
+|---|---|---|
+| **Operating system** | Ubuntu 22.04 or 24.04 (other Linux works), or macOS | Windows is not supported for the server (WSL 2 with Ubuntu may work but is untested). The admin app also has a Windows build. |
+| **Memory** | 16 GB RAM | Elasticsearch takes 1 GB, and the three models are loaded into memory or GPU memory. |
+| **Disk** | about 40 GB free | Models 12 GB, Python packages (PyTorch) about 6 GB, Docker images, the PDFs and the search index. |
+| **GPU** | optional | An NVIDIA GPU makes search much faster. The numbers in this README come from an RTX 3060 with 12 GB (2–4 s per question). Without one (and on every Mac) the models run on the CPU, which works but takes many times longer per question; measure it with the load test in [11.8](#118-capacity-and-load). |
+| **Internet** | during setup only | `setup.sh` downloads Python packages, Docker images and the models (about 12 GB from Hugging Face). After that OSISS runs offline. |
+
 ### Prerequisites
 
-* Linux or macOS with Python 3.10+ (3.12 used here), Docker with the Compose plugin, Node.js 20.19+ or 22.12+ with npm, and Tesseract OCR with the `eng`, `ben` and `hin` language packs.
-* A GPU is optional (`INFERENCE_DEVICE=cpu` works, slowly). The models need about 12 GB of disk.
+Python 3.10+, Docker with the Compose plugin, Node.js 22.12+ (or 20.19+), Git and Tesseract OCR with the English, Bengali and
+Hindi language packs. `setup.sh` checks them and stops with a message if one is missing.
+
+**Ubuntu** (as a user who may use `sudo`):
+
+```bash
+sudo apt-get update
+sudo apt-get install -y git curl python3 python3-venv python3-pip \
+  tesseract-ocr tesseract-ocr-eng tesseract-ocr-ben tesseract-ocr-hin wamerican
+
+# Docker Engine with the Compose plugin (https://docs.docker.com/engine/install/ubuntu/)
+curl -fsSL https://get.docker.com | sudo sh
+sudo usermod -aG docker "$USER"      # then log out and in again, so you can use Docker without sudo
+
+# Node.js 22 (the nodejs package that ships with Ubuntu is too old for the website)
+curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
+sudo apt-get install -y nodejs
+```
+
+With an NVIDIA GPU, also install its driver (`sudo ubuntu-drivers install`, then reboot) and check that `nvidia-smi` lists the
+card. Nothing else is needed: the PyTorch package that `setup.sh` installs brings its own CUDA libraries.
+
+**macOS** (with [Homebrew](https://brew.sh)): `brew install git python node tesseract tesseract-lang`, and install
+[Docker Desktop](https://www.docker.com/products/docker-desktop/) and start it.
+
+### Get the code
+
+```bash
+git clone https://github.com/midyadebangshu-spec/OSISS.git
+cd OSISS
+```
+
+(Or unpack a copy of the repository you were given, and `cd` into it.)
 
 ### Quick start
 
+The shortest way to try it on your own computer. For a setup that other people will use, follow
+[section 11](#11-using-the-admin-app-step-by-step) instead.
+
 ```bash
-./setup.sh                 # venv, Python deps, Docker (Postgres + Elasticsearch), schema, models, frontend deps
+./setup.sh                 # checks prerequisites; venv, Python deps, Docker (Postgres + Elasticsearch), schema, models, frontend deps
 # put PDFs in data/pdfs/
 ./ingestion.sh --once      # ingest new or changed PDFs (omit --once to keep watching)
-.venv/bin/python src/build_english_vocab.py   # refresh the English word list used for romanized-query detection
+.venv/bin/python src/build_english_vocab.py   # refresh the English word list from the ingested books
 ./api.sh                   # FastAPI on :8000
 cd frontend && npm run dev # UI on http://localhost:5173 (proxies /api, /health, /data to :8000)
 ```
 
-`setup.sh` also installs the system packages (`tesseract-ocr-eng`, `-ben`, `-hin`) when `apt-get` is available. If it cannot, install them yourself:
+`setup.sh` is safe to run again; it skips work that is already done. When system packages are missing it installs them itself
+if it can (with `apt-get` as root or a user with `sudo`, or with Homebrew); otherwise it prints the command an administrator
+should run, and carries on.
 
-```bash
-sudo apt install tesseract-ocr tesseract-ocr-eng tesseract-ocr-ben tesseract-ocr-hin
-```
+**The English word list.** OSISS tells an English question from romanized Bengali/Hindi ("goti kake bole") and mixed questions
+("what is gati") with a list of English words, `models/english_vocab.txt`. `setup.sh` builds a first one from the system
+dictionary. Rebuild it after ingesting English books (`.venv/bin/python src/build_english_vocab.py`) and restart the API, which
+reads it at startup. Without the list, every Latin-script question that has no Bengali/Hindi marker word is treated as English,
+so mixed questions are never transliterated (in [8.5](#85-ambiguous-and-mixed-queries-confidence-fallback), mixed questions
+drop from 0.90 to 0.50 hit@3 that way).
 
 ### Common commands
 
@@ -657,8 +712,8 @@ Pick the setup that matches how you will run OSISS, do the two common steps firs
 | [C. Public website](#115-setup-c-a-public-website-on-your-own-domain) | everyone on the internet | a server with a public IP and your domain (e.g. `ossis.com`) | an admin's PC anywhere |
 
 [11.6](#116-everyday-tasks) covers the day-to-day tasks, [11.7](#117-how-the-app-and-the-server-are-protected) how the app
-and the server are protected, and [11.8](#118-capacity-and-load) how many searches a server can take and how to protect it
-from overload.
+and the server are protected, [11.8](#118-capacity-and-load) how many searches a server can take and how to protect it
+from overload, and [11.9](#119-running-several-copies) how to run several copies (one machine, several machines, or AWS).
 
 > The screenshots come from a demo server with two sample PDFs and no Elasticsearch or models installed. That is why the
 > Dashboard shows Elasticsearch as down and the models as missing, and why the scores and timings in the search console screenshot are
@@ -698,8 +753,9 @@ From now on the app asks for the passkey every time it opens (and after 15 minut
 
 Use this to try OSISS, or when only the people at one computer will search.
 
-1. **Install the server:** in the OSISS folder run `./setup.sh`. Among other things it writes a random `ADMIN_TOKEN` into `.env`.
-   That token is what lets the admin app control the server.
+1. **Install the server:** install the prerequisites and get the code ([section 10](#10-setup-and-usage)), then run `./setup.sh`
+   in the OSISS folder. Among other things it writes a random `ADMIN_TOKEN` into `.env`. That token is what lets the admin
+   app control the server.
 2. **Add your PDFs (optional now):** copy them into `data/pdfs/`. You can also add them later from the app (see
    [11.6.2](#1162-add-a-book)).
 3. **Start the API once by hand to check it:** `./api.sh`. Later you can start and stop it from the app's Dashboard instead.
@@ -727,6 +783,8 @@ Use this to try OSISS, or when only the people at one computer will search.
 
 10. **Ingest the PDFs:** open **Ingestion & jobs** and click **Scan now**, or switch on **Poll the PDF folder** so new files in
     `data/pdfs/` are picked up every few seconds. Then fix the guessed titles ([11.6.1](#1161-fix-a-guessed-title)).
+    When the first ingestion has finished, refresh the English word list with `.venv/bin/python src/build_english_vocab.py`
+    and restart the API (**Stop API**, **Start API**); see [section 10](#10-setup-and-usage) for why.
 11. **Search:** run the website with `cd frontend && npm run dev` and open <http://localhost:5173>. Or build it once
     (`npm run build`), add `SERVE_FRONTEND=true` to `.env`, restart the API and open <http://localhost:8000>.
 
@@ -736,7 +794,15 @@ One machine runs OSISS for everyone on the campus network; an admin manages it f
 
 **On the server**
 
-1. Install OSISS and run `./setup.sh`, then ingest the PDFs (`./ingestion.sh --once`, or later from the app).
+1. Install the prerequisites, get the code and run `./setup.sh` ([section 10](#10-setup-and-usage)). Copy the PDFs into
+   `data/pdfs/` and ingest them, then refresh the English word list:
+
+   ```bash
+   ./ingestion.sh --once
+   .venv/bin/python src/build_english_vocab.py
+   ```
+
+   You can also add books later from the app.
 2. Serve the website from the API so students only need a browser:
 
    ```bash
@@ -781,13 +847,14 @@ only work for *This computer* servers. Everything else in the app works the same
 This makes search available to everyone on the internet at an address such as `https://ossis.com`. You need:
 
 * **A domain you own.** Check that the name is free and register it.
-* **A server that is always on**, with a public IP address. It can be your own machine or a cloud VM. It needs enough memory for the
-  models (16 GB RAM or more; a GPU makes searches much faster).
+* **A server that is always on**, with a public IP address. It can be your own machine or a cloud VM. See
+  [What you need](#what-you-need) for memory, disk and GPU (16 GB RAM or more; a GPU makes searches much faster).
 * **Ports 80 and 443 open** to the internet (for HTTPS) and port 22 for SSH. Nothing else.
 
 **On the server** (Ubuntu shown; run as a user with `sudo`)
 
-1. Create a user and install OSISS in `/opt/OSISS`:
+1. Install the prerequisites with the **Ubuntu** commands in [section 10](#prerequisites) (and the GPU driver if the server has a
+   GPU). Then create a user without `sudo` rights that runs OSISS, and install OSISS in `/opt/OSISS`:
 
    ```bash
    sudo useradd -m -s /bin/bash osiss && sudo usermod -aG docker osiss
@@ -795,10 +862,21 @@ This makes search available to everyone on the internet at an address such as `h
    sudo -iu osiss bash -c 'cd /opt/OSISS && ./setup.sh'
    ```
 
+   `setup.sh` finds the system packages already installed, so the `osiss` user never needs `sudo`.
    `docker-compose.yml` publishes PostgreSQL and Elasticsearch on `127.0.0.1` only, so they are never reachable from the internet
    even though Docker bypasses host firewalls.
 2. Build the website: `sudo -iu osiss bash -c 'cd /opt/OSISS/frontend && npm run build'`.
-3. Install the API service. `deploy/osiss-api.service` already sets `API_HOST=127.0.0.1` (only the proxy on this machine may reach
+3. **Add the books.** Copy the PDFs to the server (for example with `scp` into your home folder), then move them into the library,
+   ingest them and refresh the English word list:
+
+   ```bash
+   sudo cp ~/pdfs/*.pdf /opt/OSISS/data/pdfs/ && sudo chown -R osiss: /opt/OSISS/data/pdfs
+   sudo -iu osiss bash -c 'cd /opt/OSISS && ./ingestion.sh --once && .venv/bin/python src/build_english_vocab.py'
+   ```
+
+   You can skip this and upload books from the admin app later ([11.6.2](#1162-add-a-book)). Ingesting before the API service
+   starts keeps the two from competing for GPU memory.
+4. Install the API service. `deploy/osiss-api.service` already sets `API_HOST=127.0.0.1` (only the proxy on this machine may reach
    the API) and `SERVE_FRONTEND=true`:
 
    ```bash
@@ -807,9 +885,9 @@ This makes search available to everyone on the internet at an address such as `h
    curl http://127.0.0.1:8000/health          # {"status":"ok",...}
    ```
 
-4. **DNS:** at your domain registrar, create an `A` record for `ossis.com` (and `www` if you want it) pointing to the server's
+5. **DNS:** at your domain registrar, create an `A` record for `ossis.com` (and `www` if you want it) pointing to the server's
    public IP. Wait until `ping ossis.com` shows that IP.
-5. **HTTPS with Caddy:** install Caddy (<https://caddyserver.com/docs/install>), then:
+6. **HTTPS with Caddy:** install Caddy (<https://caddyserver.com/docs/install>), then:
 
    ```bash
    sudo cp /opt/OSISS/deploy/Caddyfile.example /etc/caddy/Caddyfile
@@ -820,25 +898,25 @@ This makes search available to everyone on the internet at an address such as `h
    Caddy gets and renews the HTTPS certificate on its own. The example also answers `403` to `/api/admin/*` from any other address,
    so the admin API is not exposed to the internet. Remove that block if admins connect from changing addresses (the token and its
    lockout still protect it).
-6. **Firewall:** `sudo ufw allow 22,80,443/tcp && sudo ufw enable`.
-7. Open `https://ossis.com` in a browser: the search page should load and answer questions.
+7. **Firewall:** `sudo ufw allow 22,80,443/tcp && sudo ufw enable`.
+8. Open `https://ossis.com` in a browser: the search page should load and answer questions.
 
 **On the admin PC**
 
-8. In the app, **Add server** with *Elsewhere*, URL `https://ossis.com` and the token from `/opt/OSISS/.env`. Leave
+9. In the app, **Add server** with *Elsewhere*, URL `https://ossis.com` and the token from `/opt/OSISS/.env`. Leave
    *Allow plain http://* unticked. **Save & test connection**.
-9. In **Access & API keys**, decide who may search ([11.6.7](#1167-choose-who-may-search-and-give-apps-api-keys)) and enter
-   `https://ossis.com` as **Public URL of this server**, so PDF links in API results are complete addresses that apps can open.
-   If the website is hosted somewhere else than this server, add that site's address under **Website domains**.
-10. Give each app that should use the search its own API key (also [11.6.7](#1167-choose-who-may-search-and-give-apps-api-keys)).
+10. In **Access & API keys**, decide who may search ([11.6.7](#1167-choose-who-may-search-and-give-apps-api-keys)) and enter
+    `https://ossis.com` as **Public URL of this server**, so PDF links in API results are complete addresses that apps can open.
+    If the website is hosted somewhere else than this server, add that site's address under **Website domains**.
+11. Give each app that should use the search its own API key (also [11.6.7](#1167-choose-who-may-search-and-give-apps-api-keys)).
 
 Before going public, consider:
 
 * **Licences:** with open access, anyone can download every PDF. Make sure the books may be shared that way.
 * **Capacity:** one API process holds one copy of the models, and searches that arrive together share it. Measure how many searches
   your server answers before announcing the site, and set a per-IP rate limit for the public. Both are covered in
-  [11.8](#118-capacity-and-load). Serving heavy public traffic needs several API copies behind a load balancer, which is on the
-  [roadmap](#16-roadmap).
+  [11.8](#118-capacity-and-load). Serving heavy public traffic needs several API copies behind a load balancer
+  ([11.9](#119-running-several-copies)), or the AWS deployment in [deploy/aws](deploy/aws/README.md).
 * **Updates:** to update, run `git pull`, then `sudo systemctl restart osiss-api`, and rebuild the website if `frontend/` changed.
 
 ### 11.6 Everyday tasks
@@ -869,7 +947,8 @@ PDF** shows the book to check its cover.
 
 The PDF is copied to the server's `data/pdfs/` and ingested with the details you entered. Scanned or legacy-font Bengali/Hindi books
 are OCRed, which can take several minutes. You can close the window: the job continues on the server and appears under
-**Ingestion & jobs**. Uploading a PDF that is already in the library is refused.
+**Ingestion & jobs**. Uploading a PDF that is already in the library is refused. After adding English books, refresh the
+English word list on the server and restart the API ([section 10](#10-setup-and-usage)).
 
 <img src="docs/images/admin/upload-done.png" width="720" alt="Upload finished">
 
@@ -896,7 +975,7 @@ The **Ingestion & jobs** page has these controls:
 * **Scan now:** runs that check once.
 * **Maintenance:** runs the upgrade and repair scripts (*Update database schema*, *Re-index language fields*, *Re-apply exercise
   flags*). Run them after upgrading OSISS when the release notes say so.
-* **Jobs:** lists everything queued or done since the server started. A queued job can be cancelled.
+* **Recent jobs:** lists what is queued, running or done. A queued job can be cancelled.
 * **Live log:** shows the progress, including OCR.
 
 <img src="docs/images/admin/ingestion.png" width="720" alt="Ingestion, jobs and live log">
@@ -1071,8 +1150,80 @@ to everyone's wait.
 6. **Public site:** set *Searches per minute per IP* (e.g. 20) so one visitor or script cannot take every slot, and give apps
    their own limit per API key.
 
-When the load test shows that even the tuned server cannot keep up, the next step is several API copies behind a load balancer
-(roadmap item 6).
+When the load test shows that even the tuned server cannot keep up, run several API copies behind a load balancer
+([11.9](#119-running-several-copies)).
+
+### 11.9 Running several copies
+
+When the load test shows that one tuned server cannot keep up, or the site must stay up when one machine fails, run
+several copies of the API behind a load balancer. Each copy has its own models (one GPU each) and its own search
+queue. What they must agree on is shared:
+
+| Shared | Through | Set on every copy |
+|---|---|---|
+| Admin-app settings and server state, the job queue and log, the admin lockout, the list of copies, the "books changed" signal that retires cached answers | PostgreSQL | `STATE_BACKEND=postgres` |
+| The PDFs and staged uploads | one folder every copy mounts (NFS, EFS), or S3 | `STORAGE_BACKEND=local` with a shared `PDF_DIR` / `UPLOAD_DIR`, or `STORAGE_BACKEND=s3` + `S3_BUCKET` |
+| Answer cache and exact rate limits (optional) | Redis | `REDIS_URL` |
+
+Without Redis each copy keeps its own answer cache and counts rate limits on its own, so set the per-IP limit to the
+total you want divided by the number of copies.
+
+**One copy runs ingestion.** `INGEST_WORKER=true` on exactly one copy (the worker) and `false` on the search copies.
+Any copy accepts uploads and shows jobs; the worker runs them, so OCR never slows down a search copy. Each job runs
+once even if two workers are started by mistake.
+
+**Every copy also needs** the same `ADMIN_TOKEN`, PostgreSQL and Elasticsearch, a unique `REPLICA_ID` (the name the
+admin app shows), `WARMUP_ON_START=true` (load the models before taking traffic), and `FORWARDED_ALLOW_IPS` set to the
+load balancer's address, so rate limits and the admin lockout see the visitors' addresses. The load balancer sends
+traffic only to copies whose `GET /ready` answers 200.
+
+**Option 1: one machine with several GPUs.** `deploy/docker-compose.replicas.yml` runs a worker and two search copies
+(one GPU each) with PostgreSQL, Elasticsearch, optional Redis and Caddy in front. Besides the NVIDIA driver, Docker needs
+the [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html)
+to give the containers a GPU (`docker run --rm --gpus all ubuntu nvidia-smi` must list the cards):
+
+```bash
+cp deploy/replicas.env.example deploy/replicas.env          # set ADMIN_TOKEN, POSTGRES_PASSWORD, OSISS_SITE, ...
+docker compose -f deploy/docker-compose.replicas.yml --env-file deploy/replicas.env up -d --build
+docker compose -f deploy/docker-compose.replicas.yml --env-file deploy/replicas.env --profile redis up -d   # with Redis
+```
+
+The models come from `../models` (mounted read-only) or `MODELS_S3_URI`. Add a copy by duplicating a `search-N` block
+and listing it in `deploy/Caddyfile.replicas`.
+
+**Option 2: several machines on the campus network.** On each machine run `./api.sh` with a `.env` holding the shared
+settings above, mount the same PDF folder (or use S3), and put Caddy in front with `deploy/Caddyfile.replicas`
+(replace `search-1:8000 ...` with the machines' addresses). Each machine can use `deploy/osiss-api.service`.
+
+**Option 3: AWS.** `deploy/aws/` creates the whole setup with Terraform: GPU copies that scale with demand, a worker,
+RDS PostgreSQL, S3, Elasticsearch on EC2 or Elastic Cloud, optional Redis and WAF. Follow
+[deploy/aws/README.md](deploy/aws/README.md), which also covers costs and removal.
+
+**Watching the copies.** The Dashboard's Search load card shows the totals and one row per copy. A copy that stops
+reporting is flagged, and the load balancer stops using it once its `/ready` check fails:
+
+<img src="docs/images/admin/replicas-load.png" width="720" alt="Search load across copies">
+
+The Server card names the shared state, the PDF storage, Redis and the copy that answered; jobs show which copy ran them:
+
+<img src="docs/images/admin/replicas-server.png" width="720" alt="Deployment facts">
+
+<img src="docs/images/admin/replicas-jobs.png" width="720" alt="Jobs run by the worker">
+
+**What was tested.** The live test used 3 search copies plus a worker behind Caddy, PostgreSQL, Redis and an
+S3-compatible store. Each search took a simulated 1 s; Elasticsearch and the models were stand-ins. The results:
+
+* A setting saved through the load balancer reached all copies within 3 s.
+* A scan and an upload queued on search copies ran once, on the worker. The uploaded PDF was served by a third copy
+  through a signed S3 link.
+* A title edit made through one copy retired the cached answer on the others.
+* A rate limit of 6 per minute held exactly across all copies.
+* Throughput rose from 2.0 to 6.0 searches/s (typical wait from 6.0 s to 2.0 s) going from one copy to three.
+* Stopping a copy during a load test cost one request (the one it was answering). The copy was flagged in the admin
+  app, and rejoined automatically after a restart.
+
+**Limits.** `ingestion.sh` running as a separate process does not signal book changes to the copies' caches. Cached
+answers then age out after *Answer cache time* instead of at once. Prefer the worker copy for ingestion.
 
 ---
 
@@ -1171,6 +1322,30 @@ All settings are environment variables, read at import time into the frozen `Set
 
 See [11.8](#118-capacity-and-load) for how to measure and tune these.
 
+### Several copies, storage and managed services
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `STATE_BACKEND` | `local` | `postgres` shares settings, jobs, log, lockouts and the copies list between API copies ([11.9](#119-running-several-copies)) |
+| `SETTINGS_SYNC_SECONDS` | `5` | How often a copy picks up settings saved through another copy |
+| `INGEST_WORKER` | `true` | Whether this process runs ingestion jobs and polling (`false` on search-only copies) |
+| `REPLICA_ID` | host name + process id | Name of this copy in the admin app |
+| `REPLICA_HEARTBEAT_SECONDS` | `15` | How often a copy reports; three missed reports mark it as not reporting |
+| `WARMUP_ON_START` | `false` | Load the models at start; `/ready` then answers 200 only once they are loaded |
+| `REDIS_URL` | *(empty)* | e.g. `redis://host:6379/0`: answer cache and exact rate limits shared by all copies |
+| `STORAGE_BACKEND` | `local` | `s3` keeps PDFs and staged uploads in S3 |
+| `S3_BUCKET`, `S3_PREFIX`, `S3_UPLOAD_PREFIX` | *(empty)*, `pdfs/`, `uploads/` | Where in S3 |
+| `S3_REGION`, `S3_ENDPOINT_URL` | *(empty)* | Region; endpoint for S3-compatible stores (MinIO, ...) |
+| `PDF_SERVE_MODE` | `redirect` | S3 PDFs: `redirect` to a short-lived signed URL, or `proxy` through the API |
+| `S3_URL_EXPIRY_SECONDS` | `900` | Lifetime of those signed URLs |
+| `POSTGRES_SSLMODE`, `POSTGRES_SSLROOTCERT` | *(empty)* | TLS to a managed database, e.g. `require` for RDS |
+| `ELASTICSEARCH_API_KEY` | *(empty)* | Secured cluster (Elastic Cloud); or `ELASTICSEARCH_USERNAME` + `ELASTICSEARCH_PASSWORD` |
+| `ELASTICSEARCH_CA_CERTS`, `ELASTICSEARCH_VERIFY_CERTS` | *(empty)*, `true` | TLS to Elasticsearch |
+
+The container image (`Dockerfile`, `deploy/docker-entrypoint.sh`) also reads `MODELS_S3_URI` (fetch `models/` from S3
+at start; see `src/sync_models.py`), `DOWNLOAD_MODELS=true`, `RUN_DB_INIT=true` (create the schema and index; set it on
+one container) and `FORWARDED_ALLOW_IPS` (the load balancer's address, whose `X-Forwarded-For` is trusted).
+
 Settings marked as runtime-editable in the admin app (search knobs, `RERANK_BATCH_SIZE`, the load-protection limits,
 `POLLING_INTERVAL_SECONDS`, `SEARCH_ACCESS`, `CORS_ORIGINS`, `PUBLIC_BASE_URL`) can be overridden from `settings_overrides.json`,
 which wins over the environment. `MODEL_PRECISION` and `SEARCH_CONCURRENCY` need a restart.
@@ -1187,7 +1362,11 @@ src/
   ingest_worker.py         in-process ingestion worker: jobs, polling, maintenance scripts, log
   runtime_config.py        settings the admin app may change at runtime, persisted overrides
   db_pool.py               PostgreSQL connection pool for the API
-  load_control.py          answer cache, rate limiter, search queue and load metrics
+  load_control.py          answer cache, rate limiter, search queue and load metrics (Redis-backed when REDIS_URL is set)
+  job_store.py             ingestion job queue and log: in memory, or shared in PostgreSQL
+  storage.py               where PDFs live: local folder or S3 (staging, signed links, local copies for OCR)
+  replica.py               this copy among several: name, heartbeat with metrics, /ready, model warm-up
+  sync_models.py           copies models/ to or from S3
   search.py                search pipeline: retrieve, fuse, rerank, diversify, QA, quote extraction
   ranking.py               model-free helpers: query cleanup, RRF, MMR, dedupe, QA windows
   translit.py              romanized-query detection and IndicXlit transliteration
@@ -1223,9 +1402,13 @@ docs/
 data/pdfs/                 source PDFs (git-ignored)
 models/                    local model cache (git-ignored)
 docker-compose.yml         Postgres + Elasticsearch (published on 127.0.0.1 only)
+Dockerfile                 API image (website built in, Tesseract with ben/hin, /ready health check)
 deploy/
   Caddyfile.example        HTTPS reverse proxy for a public domain, admin API limited to the admin's IP
   osiss-api.service        systemd unit: start the API at boot, restart it if it stops
+  docker-entrypoint.sh     container start: fetch models, optional schema init, run the API
+  docker-compose.replicas.yml, Caddyfile.replicas, replicas.env.example   several copies on one machine
+  aws/                     Terraform for AWS (guide: deploy/aws/README.md; terraform test with a mocked provider)
 setup.sh, ingestion.sh, api.sh   bootstrap and runner wrappers
 ```
 
@@ -1235,8 +1418,13 @@ setup.sh, ingestion.sh, api.sh   bootstrap and runner wrappers
 
 ```bash
 # unit tests (no services needed). The env var avoids system ROS pytest plugins that crash collection.
-# tests/test_admin_db.py uses a throwaway `osiss_test` database and is skipped when PostgreSQL is not reachable.
+# test_admin_db.py, test_replicas_db.py and the ingestion part of test_storage_s3.py use a throwaway `osiss_test`
+# database and are skipped when PostgreSQL is not reachable; test_storage_s3.py fakes S3 with moto and test_redis.py
+# starts a local redis-server (skipped if not installed): pip install moto fakeredis
 PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 .venv/bin/python -m pytest tests
+
+# AWS configuration: validated and planned against a mocked AWS provider (no account needed)
+cd deploy/aws && terraform init -backend=false && terraform test
 
 # admin app: vault, profile rules and local process control (Node 22), then lint, typecheck and build
 cd admin && npm test && npm run lint && npm run build
@@ -1263,6 +1451,8 @@ Running the evaluation while the API server is up can run out of GPU memory on a
 
 ## 15. Troubleshooting
 
+* **`setup.sh` stops with "ERROR: ...":** a prerequisite is missing or too old; install it as shown in [section 10](#prerequisites) and run `./setup.sh` again.
+* **`setup.sh` warns that this user cannot install system packages:** run the `sudo apt-get install ...` line it prints as a user with `sudo`, then run `./setup.sh` again.
 * **Docker permission denied:** add your user to the `docker` group and log in again, or run setup with sudo.
 * **Missing Python modules when running scripts:** use the wrappers (`./ingestion.sh`, `./api.sh`) or activate `.venv`.
 * **Stale API behaviour:** `pkill -f "uvicorn src.api_server:app" || true && ./api.sh`.
@@ -1270,9 +1460,13 @@ Running the evaluation while the API server is up can run out of GPU memory on a
 * **Frontend build fails with `CustomEvent is not defined`:** Node is too old for Vite 8; use Node 20.19+ or 22.12+.
 * **Garbage Bengali/Hindi text after ingestion:** the OCR language packs are missing (`tesseract --list-langs` must show `ben` and `hin`), or `OCR_FALLBACK=false`.
 * **Romanized queries behave like English:** the transliteration model is missing (`python src/download_models.py`) or `TRANSLIT_ENABLED=false`.
+* **Mixed questions ("what is gati") find nothing useful:** the English word list is missing or stale; run `.venv/bin/python src/build_english_vocab.py` and restart the API.
 * **Admin app says "Admin API is disabled":** set `ADMIN_TOKEN` in `.env` and restart `./api.sh`.
 * **Admin app gets 429:** too many wrong admin tokens from that address; wait 15 minutes or fix the token under *Servers*.
 * **Behind a reverse proxy, `ADMIN_ALLOWED_IPS` sees the proxy's address:** uvicorn only trusts `X-Forwarded-For` from `127.0.0.1` by default (`FORWARDED_ALLOW_IPS`).
+* **Several copies: a setting changed on one copy does not show on another:** all copies need `STATE_BACKEND=postgres` and the same database; changes arrive within `SETTINGS_SYNC_SECONDS`.
+* **Several copies: uploads stay "queued":** no copy runs with `INGEST_WORKER=true`, or it cannot reach the shared PDF storage (check its log in the admin app's live log).
+* **The load balancer sends no traffic to a copy:** `curl http://<copy>:8000/ready` shows which check fails (Elasticsearch, database, or models still loading with `WARMUP_ON_START=true`).
 
 ---
 
@@ -1284,8 +1478,9 @@ Running the evaluation while the API server is up can run out of GPU memory on a
 3. **Cross-language retrieval:** the language-mismatch BM25 rule and a reranker blend ([8.6](#86-experiment-soft-bm25-weight-for-cross-language-questions)), validated on a larger cross-language set.
 4. **Quote quality:** better sentence splitting around section numbers and a fallback when the QA span is a fragment.
 5. **More books and OCR quality checks** for Bengali/Hindi conjuncts.
-6. **Scaling out for heavy public traffic:** run several API copies behind a load balancer (models loaded once per copy, GPU
-   sharing, background ingestion moved to one copy) and a managed or replicated Elasticsearch/PostgreSQL.
+6. ~~**Scaling out for heavy public traffic**~~ — done: several API copies sharing state through PostgreSQL, S3 storage,
+   optional Redis, and an AWS deployment ([11.9](#119-running-several-copies)). Next: apply the AWS configuration to a real
+   account and measure real GPU throughput.
 
 ---
 

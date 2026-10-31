@@ -16,3 +16,5 @@ transformers>=4.40.0,<5
 uvicorn>=0.30.0
 ctranslate2>=4.0.0
 python-multipart>=0.0.9
+boto3>=1.34
+redis>=5.0

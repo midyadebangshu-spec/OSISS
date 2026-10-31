@@ -8,7 +8,9 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import json
 import math
+import os
 import threading
 import time
 from collections import OrderedDict, deque
@@ -57,7 +59,7 @@ class SearchCache:
     def key(query: str, top_k: int) -> Hashable:
         from ranking import normalize_query  # pylint: disable=import-outside-toplevel
 
-        return (" ".join(normalize_query(query).lower().split()), top_k, settings_fingerprint())
+        return (" ".join(normalize_query(query).lower().split()), top_k, settings_fingerprint(), shared_corpus_version())
 
     def get(self, key: Hashable) -> Optional[Any]:
         if settings.search_cache_size <= 0 or settings.search_cache_ttl_seconds <= 0:
@@ -277,3 +279,189 @@ def gate() -> SearchGate:
     if _gate is None:
         _gate = SearchGate()
     return _gate
+
+
+# --- several API copies -------------------------------------------------------------------------------------------
+#
+# With STATE_BACKEND=postgres a book change also bumps server_state.corpus_version; every copy folds the current
+# version into its cache keys (re-read at most every CORPUS_VERSION_TTL seconds), so answers cached before the change
+# stop being used everywhere. With REDIS_URL the answer cache and the rate limits are shared and exact.
+
+CORPUS_VERSION_TTL = 2.0
+_corpus_version = (0.0, 0)  # (read at, version)
+_corpus_lock = threading.Lock()
+
+
+def shared_corpus_version() -> int:
+    global _corpus_version  # pylint: disable=global-statement
+    if settings.state_backend != "postgres":
+        return 0
+    now = time.monotonic()
+    with _corpus_lock:
+        read_at, version = _corpus_version
+        if now - read_at < CORPUS_VERSION_TTL:
+            return version
+    try:
+        from db_pool import db  # pylint: disable=import-outside-toplevel
+
+        with db() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute("SELECT corpus_version FROM server_state WHERE id = 1")
+                row = cursor.fetchone()
+        version = row[0] if row else 0
+    except Exception:  # pylint: disable=broad-except
+        version = _corpus_version[1]  # database briefly unreachable: keep the last known version
+    with _corpus_lock:
+        _corpus_version = (now, version)
+    return version
+
+
+def corpus_changed() -> None:
+    """Books were added, edited, deleted or re-ingested: drop cached answers here and on every other copy."""
+    global _corpus_version  # pylint: disable=global-statement
+    cache.invalidate()
+    if settings.state_backend != "postgres":
+        return
+    try:
+        from db_pool import db  # pylint: disable=import-outside-toplevel
+
+        with db() as connection:
+            with connection:
+                with connection.cursor() as cursor:
+                    cursor.execute(
+                        "INSERT INTO server_state (id, corpus_version) VALUES (1, 1) ON CONFLICT (id) DO UPDATE "
+                        "SET corpus_version = server_state.corpus_version + 1 RETURNING corpus_version"
+                    )
+                    version = cursor.fetchone()[0]
+        with _corpus_lock:
+            _corpus_version = (time.monotonic(), version)
+    except Exception as exc:  # pylint: disable=broad-except
+        print(f"[OSISS] Could not tell other copies that books changed: {exc}")
+
+
+def _jsonable(value: Any) -> Any:
+    """Search results may hold numpy scalars; make them plain JSON values."""
+    if hasattr(value, "item"):
+        return value.item()
+    raise TypeError(f"not JSON serializable: {type(value).__name__}")
+
+
+class _Throttled:
+    """Print a backend error at most once a minute."""
+
+    def __init__(self) -> None:
+        self._last = 0.0
+
+    def warn(self, message: str) -> None:
+        if time.monotonic() - self._last > 60:
+            self._last = time.monotonic()
+            print(f"[OSISS] {message}")
+
+
+class RedisSearchCache:
+    """Answer cache shared by all copies (REDIS_URL). Falls back to computing when Redis is unreachable."""
+
+    PREFIX = "osiss:answer:"
+
+    def __init__(self, client) -> None:
+        self._client = client
+        self._local = SearchCache()  # same key function and size/TTL settings
+        self._warn = _Throttled()
+        self.hits = 0
+        self.misses = 0
+
+    key = staticmethod(SearchCache.key)
+
+    def _redis_key(self, key: Hashable) -> str:
+        return self.PREFIX + hashlib.sha256(repr(key).encode()).hexdigest()
+
+    def get(self, key: Hashable) -> Optional[Any]:
+        if settings.search_cache_size <= 0 or settings.search_cache_ttl_seconds <= 0:
+            return None
+        try:
+            raw = self._client.get(self._redis_key(key))
+        except Exception as exc:  # pylint: disable=broad-except
+            self._warn.warn(f"Redis answer cache unavailable: {exc}")
+            return None
+        if raw is None:
+            self.misses += 1
+            return None
+        self.hits += 1
+        return json.loads(raw)
+
+    def put(self, key: Hashable, value: Any) -> None:
+        if settings.search_cache_size <= 0 or settings.search_cache_ttl_seconds <= 0:
+            return
+        try:
+            self._client.set(self._redis_key(key), json.dumps(value, default=_jsonable),
+                             ex=max(1, int(settings.search_cache_ttl_seconds)))
+        except Exception as exc:  # pylint: disable=broad-except
+            self._warn.warn(f"Redis answer cache unavailable: {exc}")
+
+    def invalidate(self) -> None:
+        """Shared entries are keyed by the corpus version, so a bump already retires them; nothing to delete."""
+
+    def __len__(self) -> int:
+        try:
+            return sum(1 for _ in self._client.scan_iter(match=self.PREFIX + "*", count=500))
+        except Exception:  # pylint: disable=broad-except
+            return 0
+
+
+_SLIDING_WINDOW = """
+local key = KEYS[1]
+local now = tonumber(ARGV[1])
+local limit = tonumber(ARGV[2])
+redis.call('ZREMRANGEBYSCORE', key, '-inf', now - 60)
+if redis.call('ZCARD', key) >= limit then
+  local oldest = redis.call('ZRANGE', key, 0, 0, 'WITHSCORES')
+  return tostring(tonumber(oldest[2]) + 60 - now)
+end
+redis.call('ZADD', key, now, ARGV[3])
+redis.call('EXPIRE', key, 61)
+return '0'
+"""
+
+
+class RedisRateLimiter:
+    """Exact one-minute sliding window shared by all copies (an atomic Lua script per request).
+
+    If Redis is unreachable requests are let through (a limiter must not take search down) and a warning is printed.
+    """
+
+    PREFIX = "osiss:rate:"
+
+    def __init__(self, client, clock: Callable[[], float] = time.time) -> None:
+        self._client = client
+        self._clock = clock
+        self._script = client.register_script(_SLIDING_WINDOW)
+        self._warn = _Throttled()
+
+    def check(self, client: str, limit_per_minute: int) -> float:
+        if limit_per_minute <= 0:
+            return 0.0
+        now = self._clock()
+        try:
+            wait = float(self._script(keys=[self.PREFIX + client], args=[now, limit_per_minute, f"{now}:{os.urandom(4).hex()}"]))
+        except Exception as exc:  # pylint: disable=broad-except
+            self._warn.warn(f"Redis rate limiter unavailable, not limiting: {exc}")
+            return 0.0
+        return max(0.001, wait) if wait > 0 else 0.0
+
+
+def configure() -> List[str]:
+    """Pick shared implementations for this process (API startup). Returns notes for the log."""
+    global cache, limiter  # pylint: disable=global-statement
+    notes = []
+    if settings.redis_url:
+        import redis  # pylint: disable=import-outside-toplevel
+
+        client = redis.Redis.from_url(settings.redis_url, socket_timeout=1.0, socket_connect_timeout=1.0)
+        cache = RedisSearchCache(client)
+        limiter = RedisRateLimiter(client)
+        notes.append("Answer cache and rate limits are shared through Redis.")
+    elif settings.state_backend == "postgres":
+        notes.append(
+            "Rate limits count per API copy (no REDIS_URL): set them to the total you want divided by the number of copies."
+        )
+    return notes

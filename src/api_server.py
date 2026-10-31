@@ -11,7 +11,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import urlparse
 
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse, JSONResponse, Response
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
@@ -23,6 +23,7 @@ if CURRENT_DIR not in sys.path:
 import admin
 import admin_api
 import load_control
+import replica
 import runtime_config
 from config import settings
 from db_pool import db
@@ -41,17 +42,24 @@ os.makedirs(DATA_DIR, exist_ok=True)
 PUBLIC_PREFIXES = ("/api/search", "/data/")
 
 
-def ensure_schema() -> None:
-    """Create tables added after the first setup (excluded_files, api_clients); idempotent."""
+def ensure_schema(wait_seconds: float = 0) -> bool:
+    """Create tables added after the first setup; idempotent. Retries for up to `wait_seconds` (the database may
+    still be starting when several containers come up together). Returns whether it succeeded."""
     from db_init import POSTGRES_SCHEMA_SQL  # pylint: disable=import-outside-toplevel
 
-    try:
-        with db() as connection:
-            with connection:
-                with connection.cursor() as cursor:
-                    cursor.execute(POSTGRES_SCHEMA_SQL)
-    except Exception as exc:  # pylint: disable=broad-except
-        print(f"[OSISS] Could not update the PostgreSQL schema yet: {exc}")
+    deadline = time.monotonic() + wait_seconds
+    while True:
+        try:
+            with db() as connection:
+                with connection:
+                    with connection.cursor() as cursor:
+                        cursor.execute(POSTGRES_SCHEMA_SQL)
+            return True
+        except Exception as exc:  # pylint: disable=broad-except
+            if time.monotonic() >= deadline:
+                print(f"[OSISS] Could not update the PostgreSQL schema yet: {exc}")
+                return False
+            time.sleep(2)
 
 
 def start_admin_worker() -> None:
@@ -67,19 +75,33 @@ def start_admin_worker() -> None:
         connect=db_pool.connect,
         es_client=search.get_es_client,
         embedder=lambda: search.get_models()[0],
-        on_corpus_change=load_control.cache.invalidate,
+        on_corpus_change=load_control.corpus_changed,
     )
-    worker.start(polling=bool(runtime_config.get_state("ingester_polling", False)))
+    # Every copy can queue and show jobs; only copies with INGEST_WORKER=true run them.
+    worker.start(polling=bool(runtime_config.get_state("ingester_polling", False)), run_worker=settings.ingest_worker)
     admin_api.context.worker = worker
 
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
+    stop = threading.Event()
+    if settings.state_backend == "postgres":
+        # Settings, jobs and lockouts live in PostgreSQL in this mode, so the tables must exist first.
+        if not ensure_schema(wait_seconds=120):
+            raise RuntimeError("STATE_BACKEND=postgres but PostgreSQL is unreachable; not starting.")
+    else:
+        threading.Thread(target=ensure_schema, name="osiss-schema", daemon=True).start()
     for warning in runtime_config.load_overrides():
         print(f"[OSISS] {warning}")
-    threading.Thread(target=ensure_schema, name="osiss-schema", daemon=True).start()
+    for note in load_control.configure():
+        print(f"[OSISS] {note}")
+    admin_api.configure()
+    runtime_config.start_sync(stop)
+    replica.start_warm_up()
     start_admin_worker()
+    replica.start_heartbeat(stop)
     yield
+    stop.set()
     if admin_api.context.worker is not None:
         admin_api.context.worker.shutdown()
 
@@ -179,8 +201,14 @@ async def public_access(request: Request, call_next):
 
 
 @app.api_route("/data/{file_path:path}", methods=["GET", "HEAD"])
-def serve_pdf(file_path: str):
-    """Serve PDFs from PDF_DIR only (not other files under data/, such as admin settings or staged uploads)."""
+def serve_pdf(file_path: str, request: Request):
+    """Serve PDFs from PDF_DIR only (not other files under data/, such as admin settings or staged uploads).
+
+    With STORAGE_BACKEND=s3, `/data/pdfs/<name>` redirects to a short-lived signed S3 URL (PDF_SERVE_MODE=redirect;
+    the viewer's `#page=N` survives the redirect) or streams the object (PDF_SERVE_MODE=proxy).
+    """
+    if settings.storage_backend == "s3":
+        return serve_s3_pdf(file_path, request)
     target = os.path.realpath(os.path.join(DATA_DIR, file_path))
     pdf_root = os.path.realpath(os.path.join(PROJECT_ROOT, settings.pdf_dir))
     if not target.lower().endswith(".pdf") or os.path.commonpath([target, pdf_root]) != pdf_root:
@@ -188,6 +216,30 @@ def serve_pdf(file_path: str):
     if not os.path.isfile(target):
         raise HTTPException(404, "Not found")
     return FileResponse(target, media_type="application/pdf")
+
+
+def serve_s3_pdf(file_path: str, request: Request):
+    from botocore.exceptions import ClientError  # pylint: disable=import-outside-toplevel
+    from storage import PDF_URL_PREFIX, get_storage  # pylint: disable=import-outside-toplevel
+
+    prefix = PDF_URL_PREFIX[len("/data/"):]
+    relative = file_path[len(prefix):] if file_path.startswith(prefix) else ""
+    if not relative.lower().endswith(".pdf") or ".." in relative.split("/"):
+        raise HTTPException(404, "Not found")
+    storage = get_storage()
+    path = storage.path_for(relative)
+    try:
+        if settings.pdf_serve_mode == "proxy":
+            chunks, size = storage.stream(path)
+            headers = {"Content-Length": str(size)} if size is not None else {}
+            if request.method == "HEAD":
+                return Response(media_type="application/pdf", headers=headers)
+            return StreamingResponse(chunks, media_type="application/pdf", headers=headers)
+        if not storage.exists(path):
+            raise HTTPException(404, "Not found")
+        return RedirectResponse(storage.signed_url(path), status_code=302)
+    except ClientError as exc:
+        raise HTTPException(404, "Not found") from exc
 
 
 class SearchRequest(BaseModel):
@@ -234,6 +286,13 @@ def map_result(item: Dict[str, Any]) -> SearchResultItem:
         paragraph_text=item.get("matched_paragraph") or item.get("chunk_preview", ""),
         answer_text=answer_text or None,
     )
+
+
+@app.get("/ready")
+def ready():
+    """Load balancer health check: 200 when this copy can answer searches, else 503 (see replica.readiness)."""
+    state = replica.readiness()
+    return JSONResponse(state, status_code=200 if state["ready"] else 503)
 
 
 @app.get("/health")

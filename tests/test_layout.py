@@ -72,6 +72,12 @@ def test_definition_repairs_split_words_and_drops_headings():
     assert block == {"type": "definition", "term": "pointer", "text": "Introduction A pointer is a derived data type in C."}
 
 
+def test_clean_term_keeps_prepositional_phrases():
+    assert layout.clean_term("principal focus of the concave mirror") == "principal focus of the concave mirror"
+    assert layout.clean_term("Introduction A pointer") == "pointer"
+    assert layout.clean_term("Osmosis Osmosis") == "Osmosis"
+
+
 def test_definition_needs_a_link_to_the_query():
     assert layout.definition_block("A queue is a linear data structure.", "how does a stack work", ["procedure"]) is None
 
@@ -228,3 +234,12 @@ def test_pages_without_text_are_ocred_for_highlighting():
     assert calls == [("a.pdf", "h", 5, "bn")]
     assert rich[0]["page"]["highlights"]
     assert not layout.needs_ocr(ocred)
+
+
+def test_english_definitions_need_a_defining_phrase():
+    assert layout.definition_block("Concave mirrors are used for many purposes.", "what is a concave mirror", ["definition"]) is None
+    assert layout.definition_block("A concave mirror is a mirror curved inwards.", "what is a concave mirror", ["definition"])["term"] == "concave mirror"
+    assert layout.definition_block("Entropy is defined as a measure of disorder.", "define entropy", ["definition"])["term"] == "Entropy"
+    q = "what is photosynthesis"
+    assert layout.definition_block("Since it happens in sunlight, it is called photosynthesis (Photo: light; synthesis: to combine).", q, ["definition"])["term"] == "photosynthesis"
+    assert layout.definition_block("Plants produce their food by a process called photosynthesis.", q, ["definition"])["term"] == "photosynthesis"

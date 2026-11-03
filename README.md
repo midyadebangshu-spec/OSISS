@@ -183,6 +183,19 @@ PDF → text (or OCR) → per-page word chunks → embeddings → PostgreSQL row
 | Science Class 7 (Hindi) | hi | 260 | 364 | **full-page OCR** (Kruti Dev) |
 | NCERT Science Class X (Hindi), two editions | hi | 324 / 325 | 524 / 508 | **full-page OCR** (Kruti Dev / symbol font) |
 | Vigyan Class 10 (Hindi, reduced) | hi | 360 | 570 | **full-page OCR** (Kruti Dev) |
+| OpenStax *Chemistry 2e* | en | 1,203 | 1,946 | text layer |
+| OpenStax *Physics* | en | 875 | 1,591 | text layer |
+| OpenStax *Introduction to Computer Science* | en | 939 | 1,758 | text layer |
+| OpenStax *Concepts of Biology* | en | 613 | 1,159 | text layer |
+| NCERT Science Class 10 (English) | en | 232 | 396 | text layer |
+| NCERT Science Class 7 (English, older edition) | en | 184 | 232 | text layer |
+| Pat Morin, *Open Data Structures* (C++) | en | 336 | 383 | text layer |
+
+The last seven were added for the Context Explorer: they overlap the existing books (the NCERT ones are the English
+editions of the Hindi Class 10 and Class 7 books), so concepts link across books and languages. OpenStax and Open Data
+Structures are CC BY; the NCERT books are free to download for educational use (ncert.nic.in serves an incomplete TLS
+chain; fetch Let's Encrypt's YE1 intermediate rather than disabling certificate checks). The NCERT downloads are zips
+of chapter PDFs, merged into one PDF per book before ingesting. The evaluation numbers above predate these books.
 
 ---
 
@@ -235,6 +248,9 @@ Every step names the setting that controls it (see [section 12](#12-configuratio
 | `GET /health` | liveness check (`{status, version, admin_enabled}`) |
 | `POST /api/search` `{query, top_k?}` | returns `{exact_quote, book_title, author, department, page_number, pdf_link, paragraph_text, answer_text}` per result |
 | `POST /api/search/rich` `{query, top_k?}` | the same fields plus `kind`, `blocks`, `figures`, `tables`, `formulas`, `page` per result and a top-level `layout` (see [8.10](#810-rich-results-figures-tables-equations-and-layouts)) |
+| `GET /api/concepts?q=` | Context Explorer: concepts matching `q` (any language), or the best-defined ones without `q` |
+| `GET /api/concepts/<id>` | a concept: names, books and pages, definitions per book, neighbours with relation and order, figures |
+| `GET /api/concepts/<a>/links/<b>` | the evidence sentences (book, page) behind a link |
 | `GET /data/assets/<hash>/<name>.webp` | figure, table and equation crops and page images cut from the PDFs (same access rule as PDFs) |
 | `GET /data/pdfs/<file>.pdf` | PDFs from `PDF_DIR` only (opened by the page viewer at `#page=N`) |
 | `GET /ready` | load-balancer health check: 200 when this copy can answer searches, else 503 with the failing check |
@@ -633,6 +649,42 @@ hit@3 is unchanged; hit@1 differs by one question (noise at this size). QA now r
 chunks instead of 5, so a lower-reranked chunk with a strong QA answer can take first place, and each search is about 0.5 s
 slower. Lower `MAX_RESULTS` to trade the longest lists for speed.
 
+### 8.12 Context Explorer: concepts across textbooks
+
+The website's **Explore** tab (`#/explore/<id>`) shows, for one concept, how each book defines it, which concepts the
+books connect it to (a graph; selecting a neighbour shows the sentences that name both, with book and page), its
+figures (captions naming it) and every page it appears on. Search results link to the concepts they name ("Explore
+across books"). Everything is extractive and built offline, without a generative model.
+
+**Building it** (`src/build_concepts.py`, logic in `src/concepts.py`, storage in `src/concept_store.py`, about 4 minutes
+for 15k chunks; run after ingesting or deleting books, or "Rebuild the concept graph" in the admin app):
+
+* **Candidates**: definition sentences ("X is a/the ...", "... is called X", "a process called X", "...কে X বলে",
+  "...को X कहते हैं"), bold short lines from the page-asset cache, and bilingual glosses the books print as
+  "Indic term (English term)" (2,684 in the corpus). Boilerplate sentences repeated across books (licence lines, credits)
+  are dropped first.
+* **Merging**: by spelling (case, plural, hyphens) and through glosses only: "দ্বিপদী নামকরন (binomial nomenclature)"
+  joins the English concept. Embeddings were measured and rejected for this: with BGE-M3, true translations of short
+  terms scored 0.39-0.89 cosine and unrelated terms up to 0.75 ("प्रकाश संश्लेषण" was closer to "আলোর প্রতিফলন" than
+  to its own Bengali form).
+* **Filters**: 1-4 words, no stopwords / pronouns / code fragments / repeated words; a single English word needs two
+  definitions, a definition plus bold, a gloss, or bold in two books (generic words like "safe", "control" were the
+  hubs of most bad links); terms in more than 12% of chunks are dropped.
+* **Links**: two concepts named in at least two prose sentences together (not figure labels, key-term lists or comma
+  lists), scored with NPMI over chunks; the 25 strongest per concept are kept with up to two evidence sentences per book.
+  A relation type comes from the wording between them (is a type of, consists of / is part of, is used for, causes,
+  contrasts with); the order hint counts in how many books one concept first appears before the other.
+
+**Result on the 24-book corpus**: 3,382 concepts (about 1,900 in two or more books), 23,745 links (about 400 typed),
+6,583 figure matches; 36 of 38 hand-picked core concepts present (oxidation and lens missing). A hand check of random
+samples (concepts and links between concepts in 2+ books, 25-30 each, a fresh seed per round) went from 16/30 good links
+to about 16/25 good and 4/25 bad in the last round; concepts were about 13-17 good, 6 bad per 30 (bad ones: generic
+nouns such as "household", headings such as "contributions of greek civilization"). Cross-language links exist only where
+a book prints the English term; "संक्षारण" and "corrosion" stay separate concepts otherwise. Romanized lookups go through
+the transliteration model, which can miss ("protisoron" -> "প্রতিচরণ").
+
+The API caches the concept list for 60 s, so a rebuild shows up within a minute (concept ids change on a rebuild).
+
 ### 8.9 Eval-set growth over the project
 
 Each row is a different question set, so the rows are not directly comparable; they show what each change did on the set that existed at the time.
@@ -756,6 +808,7 @@ drop from 0.90 to 0.50 hit@3 that way).
 | Fill language subfields on old data | `.venv/bin/python src/reindex_es.py` (`--all` re-indexes everything) |
 | Re-apply the exercise heuristic | `.venv/bin/python src/backfill_exercise_flags.py [--dry-run --samples 3]` |
 | Build figures / tables / page images for existing books | `.venv/bin/python src/build_page_assets.py [--only NAME] [--force] [--prune]` |
+| Build the Context Explorer's concept graph | `.venv/bin/python src/build_concepts.py [--dry-run --samples 30]` |
 | Download models | `.venv/bin/python src/download_models.py` |
 | Frontend lint and build | `cd frontend && npm run lint && npm run build` |
 
@@ -775,6 +828,7 @@ three ways to run OSISS (one computer, campus network, public website) are descr
 * `docker-compose.yml` now publishes PostgreSQL (5433) and Elasticsearch (9200) on `127.0.0.1` only. Run
   `docker compose up -d postgres elasticsearch` once to apply it. Nothing in OSISS needs them from another machine.
 * Changing the Elasticsearch mapping or the embedding dimension generally means recreating the index and re-ingesting; chunk-boundary changes only affect books that are re-ingested.
+* Run `src/build_concepts.py` once (after `db_init.py`) to fill the Explore tab; rerun it after adding or deleting books.
 * Run `src/build_page_assets.py` once so results show figures, tables and page images straight away (otherwise each page is
   built the first time a search shows it). `--prune` removes folders of deleted books.
 
@@ -1476,6 +1530,9 @@ src/
   ranking.py               model-free helpers: query cleanup, RRF, MMR, dedupe, QA windows
   page_assets.py           per-page figures, tables, equations, text positions and page images (cached by file hash)
   layout.py                rich results: highlights, definition/list/code blocks, figure ranking, layout choice
+  concepts.py              Context Explorer graph: candidate terms, gloss merging, mentions, links, relations
+  concept_store.py         concept graph storage (PostgreSQL) and lookups; concept_api.py serves /api/concepts
+  build_concepts.py        rebuilds the concept graph from the ingested books
   translit.py              romanized-query detection and IndicXlit transliteration
   ingest.py                ingestion pipeline (watcher or --once, --only)
   utils.py                 PDF extraction, OCR fallback, chunking, language and exercise heuristics
@@ -1493,6 +1550,8 @@ frontend/                  React + TypeScript + Tailwind UI
   src/components/ResultCard.tsx   result card: lead block, highlighted paragraph, figures, tables, equations, page
   src/components/blocks/          definition / list / code views, figure / table / equation / page views
   src/components/Lightbox.tsx     full-screen figure and page viewer
+  src/pages/                      SearchPage and ExplorerPage (hash routes #/ and #/explore/<id>)
+  src/components/explorer/        concept view and graph (dependency-free force layout in src/lib/forceLayout.ts)
   src/lib/searchApi.ts            API client and response normalisation
   src/lib/textFormat.ts           display cleanup and quote/answer highlighting
 admin/                     Electron admin app (React + TypeScript + Tailwind)

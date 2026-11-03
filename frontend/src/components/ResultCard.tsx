@@ -1,8 +1,9 @@
-import { Download, PanelRightOpen } from 'lucide-react'
+import { Download, Network, PanelRightOpen } from 'lucide-react'
 import type { SearchResult } from '../types/search'
 import { buildParagraphSegments } from '../lib/textFormat'
 import type { Segment } from '../lib/textFormat'
 import { KIND_LABEL, figureGallery, hasLead, sourceLabel } from '../lib/results'
+import { exploreHref } from '../lib/route'
 import { useViewer } from '../lib/viewer'
 import { CodeView, DefinitionView, ListView } from './blocks/ContentBlocks'
 import { FigureView, FormulaStrip, PageCard, TableView } from './blocks/MediaBlocks'
@@ -63,10 +64,30 @@ export function LeadBlock({ result, large = false }: { result: SearchResult; lar
     return null
 }
 
+/** Links into the Context Explorer for the concepts a hit names. */
+export function ConceptLinks({ result }: { result: SearchResult }) {
+    if (!result.concepts.length) return null
+    return (
+        <div className="flex flex-wrap items-center gap-2 text-sm">
+            <span className="inline-flex items-center gap-1 text-xs uppercase tracking-[0.14em] text-zinc-500">
+                <Network className="h-3.5 w-3.5" /> Explore across books
+            </span>
+            {result.concepts.map((concept) => (
+                <a key={concept.id} href={exploreHref(concept.id)} className="border border-zinc-300 px-2 py-0.5 hover:border-zinc-950 hover:bg-zinc-50">
+                    {concept.label}
+                    {concept.book_count > 1 && <span className="ml-1 text-xs text-zinc-500">{concept.book_count}</span>}
+                </a>
+            ))}
+        </div>
+    )
+}
+
 export function SourceFooter({ result }: { result: SearchResult }) {
     const { togglePage, isPageOpen } = useViewer()
     const open = isPageOpen(result.pdf_link, result.page_number)
     return (
+        <>
+        <ConceptLinks result={result} />
         <div className="flex flex-col gap-3 border-t border-zinc-300 pt-3 text-sm md:flex-row md:items-end md:justify-between">
             <div className="min-w-0">
                 <p className="truncate font-semibold text-zinc-950" title={result.book_title}>
@@ -93,6 +114,7 @@ export function SourceFooter({ result }: { result: SearchResult }) {
                 </a>
             </div>
         </div>
+        </>
     )
 }
 

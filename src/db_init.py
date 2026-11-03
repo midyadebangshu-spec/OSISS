@@ -113,6 +113,52 @@ CREATE TABLE IF NOT EXISTS replicas (
 
 -- For S3 storage: the object's ETag when it was ingested, so the poller does not download unchanged files.
 ALTER TABLE books ADD COLUMN IF NOT EXISTS source_version TEXT;
+
+-- Context Explorer (src/concepts.py, rebuilt as a whole by src/build_concepts.py).
+CREATE TABLE IF NOT EXISTS concepts (
+    id SERIAL PRIMARY KEY,
+    key TEXT NOT NULL UNIQUE,
+    label TEXT NOT NULL,
+    aliases JSONB NOT NULL DEFAULT '[]'::jsonb,
+    book_count INT NOT NULL DEFAULT 0,
+    mention_count INT NOT NULL DEFAULT 0,
+    definition_count INT NOT NULL DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS concept_mentions (
+    concept_id INT NOT NULL REFERENCES concepts(id) ON DELETE CASCADE,
+    book_id INT NOT NULL REFERENCES books(id) ON DELETE CASCADE,
+    chunk_id BIGINT,
+    page_number INT,
+    is_definition BOOLEAN NOT NULL DEFAULT FALSE,
+    sentence TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_concept_mentions_concept ON concept_mentions(concept_id);
+CREATE TABLE IF NOT EXISTS concept_links (
+    source_id INT NOT NULL REFERENCES concepts(id) ON DELETE CASCADE,
+    target_id INT NOT NULL REFERENCES concepts(id) ON DELETE CASCADE,
+    weight REAL NOT NULL,
+    npmi REAL NOT NULL,
+    sentence_count INT NOT NULL,
+    chunk_count INT NOT NULL,
+    book_count INT NOT NULL,
+    relation TEXT,
+    relation_source_id INT,
+    order_hint INT NOT NULL DEFAULT 0,
+    evidence JSONB NOT NULL DEFAULT '[]'::jsonb,
+    PRIMARY KEY (source_id, target_id)
+);
+CREATE INDEX IF NOT EXISTS idx_concept_links_target ON concept_links(target_id);
+CREATE TABLE IF NOT EXISTS concept_figures (
+    concept_id INT NOT NULL REFERENCES concepts(id) ON DELETE CASCADE,
+    book_id INT NOT NULL REFERENCES books(id) ON DELETE CASCADE,
+    page_number INT NOT NULL,
+    image TEXT NOT NULL,
+    caption TEXT,
+    label TEXT,
+    width INT,
+    height INT
+);
+CREATE INDEX IF NOT EXISTS idx_concept_figures_concept ON concept_figures(concept_id);
 """
 
 

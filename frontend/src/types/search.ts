@@ -54,6 +54,8 @@ export type SearchResult = {
     tables: Table[]
     formulas: Formula[]
     page?: PageSnapshot | null
+    /** Concepts the hit names, for the Context Explorer. */
+    concepts: { id: number; label: string; book_count: number }[]
 }
 
 export type LayoutKind = 'answer' | 'visual' | 'table' | 'compare' | 'steps' | 'empty'

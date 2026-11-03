@@ -50,9 +50,14 @@ export function FigureView({ figure, source, gallery, index = 0, size = 'normal'
     )
 }
 
+const CAPTION_LABEL = /^\s*\S+\s*[.:\-–]?\s*[0-9০-৯०-९]+(?:\s*[.\-–]\s*[0-9০-৯०-९]+)*\s*[.:\-–]?\s*/u
+
 function stripLabel(caption: string): string {
-    // "Figure 4.1 Difference between..." -> "Difference between..." (the label is shown separately).
-    return caption.replace(/^\s*\S+\s*[.:\-–]?\s*[0-9০-৯०-९]+(?:\s*[.\-–]\s*[0-9০-৯०-९]+)*\s*[.:\-–]?\s*/u, '') || caption
+    // "Figure 4.1 Difference between..." -> "Difference between..." (the label is shown separately). Some PDFs
+    // print the label twice ("Figure 9.2 Figure 9.2 (a) ..."), so strip it while it repeats.
+    let text = caption
+    for (let i = 0; i < 3 && CAPTION_LABEL.test(text); i++) text = text.replace(CAPTION_LABEL, '')
+    return text || caption
 }
 
 /** A table from the book as real rows (selectable, searchable), with the original crop one click away. */

@@ -77,9 +77,13 @@ CODE_LINE_RE = re.compile(
 
 DEFINITION_PATTERNS = {
     "en": [
-        re.compile(r"(?P<body>.+?)\s+(?:is|are)\s+(?:called|known as|termed)\s+(?:an?\s+|the\s+)?(?P<term>[^.,;:]{2,60}?)\s*[.]?$", re.I),
+        # "... is called X." (an etymology in brackets may follow: "... called photosynthesis (Photo: light; ...).")
+        re.compile(r"(?P<body>.+?)\s+(?:is|are)\s+(?:called|known as|termed)\s+(?:an?\s+|the\s+)?(?P<term>[^.,;:()]{2,60}?)\s*(?:\([^)]*\))?\s*[.]?$", re.I),
+        # "... by a process called X."
+        re.compile(r"(?P<body>.*?\b(?:a|the)\s+(?:process|phenomenon|method|technique|property|reaction|force|substance|structure|device|unit|type)\s+(?:called|known as|termed))\s+(?:an?\s+|the\s+)?(?P<term>[^.,;:()]{2,60}?)\s*(?:\([^)]*\))?\s*[.]?$", re.I),
         re.compile(
-            r"^(?:an?\s+|the\s+)?(?P<term>[^.,;:]{2,60}?)\s+(?:is|are|refers to|means|is defined as|are defined as)\s+(?P<body>.+)$",
+            # "X is a/an/the ..." (not "X are used for ..."), "X refers to / means / is defined as ...".
+            r"^(?:an?\s+|the\s+)?(?P<term>[^.,;:]{2,60}?)\s+(?:(?:is|are)\s+(?=(?:a|an|the|one|any|said\s+to\s+be|also\s+called|known\s+as)\b)|refers\s+to|means|(?:is|are)\s+defined\s+as)\s*(?P<body>.+)$",
             re.I,
         ),
     ],
@@ -135,6 +139,7 @@ def referenced_labels(text: str) -> Tuple[Set[str], Set[str]]:
 
 
 ARTICLES = {"a", "an", "the"}
+PREPOSITIONS = {"of", "in", "on", "at", "for", "to", "by", "with", "from", "into", "about", "between", "through"}
 
 
 def rejoin_split_words(text: str, query: str) -> str:
@@ -148,10 +153,12 @@ def rejoin_split_words(text: str, query: str) -> str:
 
 
 def clean_term(term: str) -> str:
-    """Drop a heading glued in front of the term: "Introduction A pointer" -> "pointer"."""
-    words = term.split()
+    """Drop a heading glued in front of the term: "Introduction A pointer" -> "pointer", "Osmosis Osmosis" -> "Osmosis"."""
+    words = [word for index, word in enumerate(term.split()) if index == 0 or word.lower() != term.split()[index - 1].lower()]
+    term = " ".join(words)
     for index in range(1, len(words) - 1):
-        if words[index].lower() in ARTICLES:
+        # Not after a preposition: "principal focus of the concave mirror" is one term, not a heading + term.
+        if words[index].lower() in ARTICLES and words[index - 1].lower() not in PREPOSITIONS:
             return " ".join(words[index + 1 :])
     if words and words[0].lower() in ARTICLES and len(words) > 1:
         return " ".join(words[1:])

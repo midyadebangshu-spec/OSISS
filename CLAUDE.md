@@ -16,7 +16,7 @@ Always use the `.venv` interpreter (created by `./setup.sh`); scripts in `src/` 
 ./setup.sh                      # venv, deps, docker (postgres+ES), schema, model download
 ./ingestion.sh --once           # ingest new/changed PDFs from data/pdfs/ (omit --once to poll)
 ./api.sh                        # uvicorn src.api_server:app on :8000
-cd frontend && npm run dev      # :5173, proxies /api, /health, /data to :8000
+cd frontend && npm run dev      # :5173, proxies /api, /health, /data to :8000 (OSISS_API_URL to change)
 cd frontend && npm run lint && npm run build
 .venv/bin/python src/db_init.py # idempotent; adds new columns/index after upgrades
 .venv/bin/python src/search.py --query "..."   # CLI search
@@ -45,6 +45,10 @@ Changing the ES mapping or embedding dim generally requires recreating the index
 ## Rich results (website)
 
 `/api/search/rich` (the web UI; `/api/search` is unchanged) adds per-hit `kind`, `blocks` (definition/list/code), `figures`, `tables`, `formulas`, `page` (image + highlight rects as page fractions) and a top-level `layout` (`answer|visual|table|compare|steps`). `src/page_assets.py` (PyMuPDF heuristics) analyses each page once into `ASSET_DIR/<file_hash>/p{N}.json` + WebP crops, served by `/data/assets/<hash>/<name>.webp` (only `p\d+(-[ftm]\d+)?.webp`; the JSON stays private). Built at ingestion, by `src/build_page_assets.py` for existing books, or lazily per page by a search; bump `ASSET_VERSION` after changing the extractor so cached pages rebuild. Pages without a usable text layer are OCRed on first display (`add_ocr_text`) for highlighting. `src/layout.py` is model- and PDF-free (quote alignment, list/code/definition detection, asset ranking, `choose_layout`); test it with hand-written page dicts (`tests/test_layout.py`); `tests/test_page_assets.py` builds a synthetic PDF. PyMuPDF calls in the API process go through `page_assets._RENDER_LOCK`. Frontend: `components/layouts/ResultsView.tsx` switches on `layout.kind`; blocks in `components/blocks/`; non-component helpers live in `lib/results.ts` (react-refresh lint rule).
+
+## Context Explorer
+
+`src/concepts.py` (model- and service-free) builds a concept graph from chunk text, bold lines and figure captions of the page-asset cache: definition / gloss / bold candidates, gloss-only cross-language merging (embeddings measured too unreliable for short terms), `supported()` + `acceptable()` filters, NPMI links needing 2+ prose sentences, pattern relation types, order hints. `src/build_concepts.py` runs it and `concept_store.write_graph` replaces the `concepts` / `concept_mentions` / `concept_links` / `concept_figures` tables in one transaction (ids change on every rebuild; the API's index cache lives 60 s). `src/concept_api.py` serves `/api/concepts*` and `concepts_in_text` (concept links on rich results). Check quality with `build_concepts.py --dry-run --samples 30` and judge samples by hand; `tests/test_concepts.py` (strings) and `tests/test_concepts_db.py` (throwaway `osiss_test` DB). Frontend: `#/explore/<id>` hash routes (`lib/route.ts`), `pages/ExplorerPage.tsx`, `components/explorer/`; the graph layout is our own (`lib/forceLayout.ts`), no d3. `OSISS_API_URL` points the Vite proxy at another API port.
 
 ## Evaluating search changes
 

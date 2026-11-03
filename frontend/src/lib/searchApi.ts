@@ -28,6 +28,7 @@ const MOCK_RESPONSE: SearchResponse = {
             tables: [],
             formulas: [],
             page: null,
+            concepts: [],
         },
     ],
 }
@@ -66,6 +67,7 @@ function normalizeResult(item: ApiResult): SearchResult {
         tables: item.tables ?? [],
         formulas: item.formulas ?? [],
         page: item.page ?? null,
+        concepts: item.concepts ?? [],
     }
 }
 

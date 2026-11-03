@@ -23,6 +23,7 @@ if CURRENT_DIR not in sys.path:
 
 import admin
 import admin_api
+import concept_api
 import layout
 import load_control
 import page_assets
@@ -42,7 +43,7 @@ FRONTEND_DIST = os.path.join(PROJECT_ROOT, "frontend", "dist")
 os.makedirs(DATA_DIR, exist_ok=True)
 
 # Paths the search-access rule (open / key) and CORS apply to. Admin routes have their own token auth.
-PUBLIC_PREFIXES = ("/api/search", "/data/")
+PUBLIC_PREFIXES = ("/api/search", "/api/concepts", "/data/")
 
 
 def ensure_schema(wait_seconds: float = 0) -> bool:
@@ -114,6 +115,7 @@ app = FastAPI(title="OSISS API", version=admin_api.VERSION, lifespan=lifespan)
 admin_api.context.es_client = lambda: __import__("search").get_es_client()
 admin_api.context.search = lambda query, top_k, timings: search_and_extract(query, top_k, timings=timings)
 app.include_router(admin_api.router)
+app.include_router(concept_api.router)
 
 
 def same_site(request: Request) -> bool:
@@ -297,6 +299,8 @@ class RichResultItem(SearchResultItem):
     tables: List[Dict[str, Any]] = Field(default_factory=list)
     formulas: List[Dict[str, Any]] = Field(default_factory=list)
     page: Optional[Dict[str, Any]] = None
+    # Concepts the hit names, for the Context Explorer ({id, label, book_count}).
+    concepts: List[Dict[str, Any]] = Field(default_factory=list)
 
 
 class LayoutInfo(BaseModel):
@@ -429,7 +433,16 @@ async def api_search_rich(payload: SearchRequest, request: Request):
     items = result.get("results", [])
     query = result.get("query", payload.query)
     rich, layout_info = await run_in_threadpool(enrich, query, items)
-    results = [RichResultItem(**map_result(item).model_dump(), **extra) for item, extra in zip(items, rich)]
+    named = await run_in_threadpool(
+        lambda: [
+            concept_api.concepts_in_text([item.get("quote", ""), item.get("matched_paragraph", "")], query=query)
+            for item in items
+        ]
+    )
+    results = [
+        RichResultItem(**map_result(item).model_dump(), **extra, concepts=found)
+        for item, extra, found in zip(items, rich, named)
+    ]
     return RichSearchResponse(query=query, layout=LayoutInfo(**layout_info), results=results)
 
 

@@ -19,6 +19,7 @@ from clients import get_elasticsearch_client
 from config import settings
 from ranking import (
     best_answer_span,
+    cut_by_relative_score,
     dedupe_candidates,
     keyword_fields,
     keyword_query_text,
@@ -497,8 +498,11 @@ def diversify_candidates(candidates: List[Dict], limit: int) -> List[Dict]:
     return mmr_select(candidates, limit, settings.mmr_lambda)
 
 
-def search_and_extract(query: str, top_k: int = 3, timings: Optional[Dict[str, float]] = None) -> Dict:
+def search_and_extract(query: str, top_k: Optional[int] = None, timings: Optional[Dict[str, float]] = None) -> Dict:
     """Full search pipeline from query embedding to extractive answer JSON.
+
+    With `top_k` exactly that many results (at most); without it every hit scoring at least RESULT_RELATIVE_SCORE x
+    the best hit's final score, up to MAX_RESULTS.
 
     When `timings` is given it is filled with seconds per stage (load, retrieve, rerank, diversify, qa).
     """
@@ -516,7 +520,8 @@ def search_and_extract(query: str, top_k: int = 3, timings: Optional[Dict[str, f
     lap("load")
 
     query = normalize_query(query)
-    window = max(top_k, settings.retrieval_candidates)
+    limit = top_k if top_k is not None else max(1, settings.max_results)
+    window = max(limit, settings.retrieval_candidates)
     mode = query_mode(query)
     variant_queries: Dict[str, str] = {}
 
@@ -538,7 +543,7 @@ def search_and_extract(query: str, top_k: int = 3, timings: Optional[Dict[str, f
         if mode == "ambiguous":
             candidates, variant_queries = romanized_fallback(es_client, embedder, query, candidates, window)
         lap("rerank")
-    candidates = diversify_candidates(candidates, top_k + max(0, settings.qa_extra_candidates))
+    candidates = diversify_candidates(candidates, limit + max(0, settings.qa_extra_candidates))
     lap("diversify")
 
     if not candidates:
@@ -600,7 +605,9 @@ def search_and_extract(query: str, top_k: int = 3, timings: Optional[Dict[str, f
         "query": query,
         "mode": mode,
         "variant_queries": variant_queries,
-        "results": enriched_results[:top_k],
+        "results": enriched_results[:top_k]
+        if top_k is not None
+        else cut_by_relative_score(enriched_results, final_score, settings.result_relative_score, limit),
     }
 
 
@@ -608,7 +615,7 @@ def parse_args() -> argparse.Namespace:
     """Parse command-line inputs for search requests."""
     parser = argparse.ArgumentParser(description="OSISS Search + QA")
     parser.add_argument("--query", type=str, required=True, help="Search question in Bengali, Hindi, or English")
-    parser.add_argument("--top-k", type=int, default=3, help="Number of chunks to retrieve")
+    parser.add_argument("--top-k", type=int, default=None, help="Number of results (default: relative score threshold)")
     return parser.parse_args()
 
 

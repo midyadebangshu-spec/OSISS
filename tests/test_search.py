@@ -139,6 +139,33 @@ def test_search_and_extract_dedupes_and_gives_extra_candidates_to_qa(monkeypatch
     assert result["results"][0]["quote"] == "ANSWER is here."
 
 
+def test_without_top_k_results_are_cut_relative_to_the_best(monkeypatch, override):
+    override(hybrid_mode="rrf", retrieval_candidates=10, dedupe_results=True, mmr_lambda=1.0, qa_extra_candidates=1,
+             qa_rank_weight=0.0, min_qa_score=0.0, result_relative_score=0.4, max_results=3)
+    scores = {"A": 0.9, "B": 0.5, "C": 0.37, "D": 0.3, "E": 0.2}
+    dense = [hit(f"p{name}", "a.pdf", page, f"{name} text") for page, name in enumerate(scores, start=1)]
+    seen_by_qa = []
+
+    class ScoreReranker:
+        def predict(self, pairs, **_):
+            return [scores[text.split()[0]] for _, text in pairs]
+
+    def fake_qa(question, context):
+        seen_by_qa.append(context)
+        return {"answer": context[:1], "score": 0.5, "start": 0, "end": 1}
+
+    monkeypatch.setattr(search, "get_es_client", lambda: FakeES(dense=dense, keyword=[]))
+    monkeypatch.setattr(search, "get_models", lambda: (FakeEmbedder(), fake_qa))
+    monkeypatch.setattr(search, "get_reranker", lambda: ScoreReranker())
+
+    texts = lambda result: [r["chunk_preview"].split()[0] for r in result["results"]]
+    assert texts(search.search_and_extract("q")) == ["A", "B", "C"]  # 0.37 >= 0.4 * 0.9; D would be 4th > max 3
+    assert len(seen_by_qa) == 4  # max_results + qa_extra_candidates
+    override(result_relative_score=0.5)
+    assert texts(search.search_and_extract("q")) == ["A", "B"]
+    assert texts(search.search_and_extract("q", top_k=4)) == ["A", "B", "C", "D"]  # explicit top_k: no threshold
+
+
 class WordTokenizer:
     """Fake slow tokenizer: one id per short word, two for words longer than six characters."""
 

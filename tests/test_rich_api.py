@@ -35,6 +35,7 @@ def client(tmp_path, monkeypatch):
         object.__setattr__(settings, key, value)
     pdf_path = str(tmp_path / "book.pdf")
     make_pdf(pdf_path)
+    calls = []
 
     monkeypatch.setattr(api_server.app.router, "lifespan_context", _no_lifespan)
     monkeypatch.setattr(load_control, "cache", load_control.SearchCache())
@@ -43,6 +44,7 @@ def client(tmp_path, monkeypatch):
     monkeypatch.setattr(load_control, "_gate", None)
 
     def fake_search(query, top_k, timings=None):
+        calls.append(top_k)
         return {"query": query, "results": [{
             "quote": "The angle of incidence is always equal to the angle of reflection for a plane mirror.",
             "matched_paragraph": "Light travels in straight lines. The angle of incidence is always equal to the angle of "
@@ -54,6 +56,7 @@ def client(tmp_path, monkeypatch):
     monkeypatch.setattr(api_server, "search_and_extract", fake_search)
     monkeypatch.setattr(api_server, "book_hashes", lambda paths: {pdf_path: FILE_HASH})
     with TestClient(api_server.app) as test_client:
+        test_client.calls = calls
         yield test_client
     for key, value in saved.items():
         object.__setattr__(settings, key, value)
@@ -98,3 +101,10 @@ def test_rich_search_without_page_assets(client):
 def test_asset_route_only_serves_cached_images(client, path):
     client.post("/api/search/rich", json={"query": "mirror"})
     assert client.get(path).status_code == 404
+
+
+def test_top_k_is_optional_and_passed_through(client):
+    client.post("/api/search/rich", json={"query": "mirror"})
+    client.post("/api/search", json={"query": "lens", "top_k": 4})
+    assert client.calls == [None, 4]  # no top_k: the pipeline applies the relative score threshold
+    assert client.post("/api/search", json={"query": "x", "top_k": 11}).status_code == 422

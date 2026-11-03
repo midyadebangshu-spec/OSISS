@@ -264,7 +264,8 @@ class SearchRequest(BaseModel):
     """Request payload for semantic search."""
 
     query: str = Field(..., min_length=1)
-    top_k: int = Field(default=3, ge=1, le=10)
+    # Omitted: every hit scoring at least RESULT_RELATIVE_SCORE x the best one, up to MAX_RESULTS.
+    top_k: Optional[int] = Field(default=None, ge=1, le=10)
 
 
 class SearchResultItem(BaseModel):

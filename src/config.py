@@ -91,6 +91,10 @@ class Settings:
     mmr_lambda: float = float(os.getenv("MMR_LAMBDA", "0.85"))
     # Extra reranked chunks sent to QA beyond top_k, so a strong QA answer can still make the cut.
     qa_extra_candidates: int = int(os.getenv("QA_EXTRA_CANDIDATES", "2"))
+    # Requests without top_k (the website) get every hit scoring at least this fraction of the best hit's final score,
+    # up to MAX_RESULTS. 0.4 keeps 140/145 labelled relevant hits in the top 10 at 3.2 results on average (README 8.11).
+    result_relative_score: float = float(os.getenv("RESULT_RELATIVE_SCORE", "0.4"))
+    max_results: int = int(os.getenv("MAX_RESULTS", "10"))
 
     embedding_dim: int = int(os.getenv("EMBEDDING_DIM", "1024"))
     inference_device: str = os.getenv("INFERENCE_DEVICE", "auto").lower()

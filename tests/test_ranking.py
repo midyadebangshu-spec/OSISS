@@ -8,6 +8,7 @@ import numpy as np
 
 from ranking import (
     best_answer_span,
+    cut_by_relative_score,
     dedupe_candidates,
     keyword_fields,
     keyword_query_text,
@@ -171,3 +172,13 @@ def test_best_answer_span_never_ends_before_start():
 def test_locate_subsequence_finds_pair_segment():
     assert locate_subsequence([0, 5, 6, 2, 2, 5, 6, 7, 2], [5, 6, 7]) == 5
     assert locate_subsequence([0, 5, 6, 2, 2, 5, 6, 2], [5, 6]) == 5
+
+
+def test_cut_by_relative_score():
+    items = [{"s": 0.8}, {"s": 0.5}, {"s": 0.33}, {"s": 0.31}, {"s": 0.1}]
+    score = lambda item: item["s"]
+    assert [i["s"] for i in cut_by_relative_score(items, score, 0.4, 10)] == [0.8, 0.5, 0.33]
+    assert [i["s"] for i in cut_by_relative_score(items, score, 0.4, 2)] == [0.8, 0.5]
+    assert cut_by_relative_score(items, score, 1.0, 10) == [items[0]]  # the best hit always stays
+    assert cut_by_relative_score([], score, 0.4, 10) == []
+    assert len(cut_by_relative_score([{"s": 0.0}, {"s": 0.0}], score, 0.4, 10)) == 2  # all zero: nothing to cut on

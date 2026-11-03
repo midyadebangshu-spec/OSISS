@@ -56,7 +56,7 @@ class SearchCache:
         self.misses = 0
 
     @staticmethod
-    def key(query: str, top_k: int) -> Hashable:
+    def key(query: str, top_k: Optional[int]) -> Hashable:
         from ranking import normalize_query  # pylint: disable=import-outside-toplevel
 
         return (" ".join(normalize_query(query).lower().split()), top_k, settings_fingerprint(), shared_corpus_version())

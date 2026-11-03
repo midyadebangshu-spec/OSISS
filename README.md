@@ -211,12 +211,15 @@ Every step names the setting that controls it (see [section 12](#12-configuratio
 5. **Fuse with Reciprocal Rank Fusion** (`HYBRID_MODE=rrf`): chunks are ranked by their ranks in the two lists, not by raw scores.
 6. **Rerank** the fused candidates with the cross-encoder `bge-reranker-v2-m3` (`RERANK_ENABLED`). This is the most important quality step.
 7. **Diversify:** keep the best chunk per (book, page), drop near-duplicates (Jaccard ≥ 0.8, for example another edition of the same
-   text), then choose `top_k + QA_EXTRA_CANDIDATES` chunks with Maximal Marginal Relevance (`MMR_LAMBDA`).
+   text), then choose `top_k + QA_EXTRA_CANDIDATES` chunks (`MAX_RESULTS + QA_EXTRA_CANDIDATES` without `top_k`) with Maximal Marginal Relevance (`MMR_LAMBDA`).
 8. **Extractive QA** on those chunks: `xlm-roberta-large-squad2` finds the most probable answer span. Long chunks are read in
    384-token windows with stride 128 so the answer is never cut off.
 9. **Quote and paragraph.** The sentence containing the answer span becomes the quote; neighbouring sentences (up to about 140
    words) form the matched paragraph.
-10. **Final score and order:** `(1 − w)·rerank + w·QA` with `QA_RANK_WEIGHT` w = 0.3; the best `top_k` (default 3) are returned.
+10. **Final score and order:** `(1 − w)·rerank + w·QA` with `QA_RANK_WEIGHT` w = 0.3. With `top_k` the best `top_k` are returned;
+    without it (the website) every hit scoring at least `RESULT_RELATIVE_SCORE` (0.4) × the best hit's score, up to
+    `MAX_RESULTS` (10), so a clear answer is one result and a question several books answer gets several
+    ([8.11](#811-how-many-results-a-relative-score-threshold)).
 11. **Display** (frontend): the paragraph is cleaned for reading (bullets become list items, stray spaces and control characters are
     removed), the quoted sentence is highlighted lightly and the exact QA answer phrase strongly. Answers with a QA score below 0.02
     are not highlighted, because they are near-random spans.
@@ -230,8 +233,8 @@ Every step names the setting that controls it (see [section 12](#12-configuratio
 | Endpoint | |
 |---|---|
 | `GET /health` | liveness check (`{status, version, admin_enabled}`) |
-| `POST /api/search` `{query, top_k}` | returns `{exact_quote, book_title, author, department, page_number, pdf_link, paragraph_text, answer_text}` per result |
-| `POST /api/search/rich` `{query, top_k}` | the same fields plus `kind`, `blocks`, `figures`, `tables`, `formulas`, `page` per result and a top-level `layout` (see [8.10](#810-rich-results-figures-tables-equations-and-layouts)) |
+| `POST /api/search` `{query, top_k?}` | returns `{exact_quote, book_title, author, department, page_number, pdf_link, paragraph_text, answer_text}` per result |
+| `POST /api/search/rich` `{query, top_k?}` | the same fields plus `kind`, `blocks`, `figures`, `tables`, `formulas`, `page` per result and a top-level `layout` (see [8.10](#810-rich-results-figures-tables-equations-and-layouts)) |
 | `GET /data/assets/<hash>/<name>.webp` | figure, table and equation crops and page images cut from the PDFs (same access rule as PDFs) |
 | `GET /data/pdfs/<file>.pdf` | PDFs from `PDF_DIR` only (opened by the page viewer at `#page=N`) |
 | `GET /ready` | load-balancer health check: 200 when this copy can answer searches, else 503 with the failing check |
@@ -594,6 +597,41 @@ unchanged; the website calls `/api/search/rich` and falls back to it on older se
 
 Building every page of the 17-book corpus (5,485 pages) takes about 3 minutes with 8 processes and 620 MB of disk. New books
 are analysed while ingesting; `src/build_page_assets.py` does existing books; searches build missing pages on demand.
+
+### 8.11 How many results: a relative score threshold
+
+The website used to show exactly three results, because it sent no `top_k` and the API defaulted to 3: a clear single answer
+came with two weak hits, and a question answered by several books lost the rest. Requests without `top_k` now get every hit
+whose final score is at least `RESULT_RELATIVE_SCORE` × the best hit's, up to `MAX_RESULTS` (an explicit `top_k` behaves as
+before, so API clients see no change).
+
+The rule was chosen on the 109 eval questions (top 10 hits each, 1,090 hits, 145 of them labelled relevant). The best hit is
+always kept:
+
+| Rule | Results per question | Relevant hits kept | Share of shown hits relevant | Questions losing every relevant hit |
+|---|---|---|---|---|
+| Fixed 3 (before) | 3.0 | 129 / 145 | 0.39 | 1 |
+| Fixed 5 | 5.0 | 141 | 0.26 | 0 |
+| Score ≥ 0.1 | 3.9 | 138 | 0.32 | 3 |
+| Score ≥ 0.2 | 3.2 | 131 | 0.37 | 5 |
+| **Score ≥ 0.4 × best** | **3.2** | **140** | **0.41** | **1** |
+| Score ≥ 0.5 × best | 2.9 | 140 | 0.44 | 1 |
+
+A fixed cut-off is the wrong tool: final scores swing a lot between questions (relevant hits: 10th percentile 0.12, median
+0.69), so it drops correct answers to hard questions. Relative to the best hit, the count follows the question: with 0.4,
+35 questions show 1 result, 51 show 2-4 and 23 show 5-10. The "relevant" share is a lower bound, since the labels name one
+expected book and other books often answer too. `tests/eval_search.py --mode full --depth 0` evaluates this mode.
+
+Full pipeline on the eval set, two alternating runs each (identical numbers):
+
+| | hit@1 | hit@3 | MRR | top-1 answer keyword | results / query | seconds / query |
+|---|---|---|---|---|---|---|
+| `top_k=3` (before) | 0.807 | 0.963 | 0.881 | 0.76 | 3.0 | 2.47 |
+| no `top_k`, 0.4 × best | 0.798 | 0.963 | 0.875 | 0.75 | 3.2 | 2.98 |
+
+hit@3 is unchanged; hit@1 differs by one question (noise at this size). QA now reads `MAX_RESULTS + QA_EXTRA_CANDIDATES` = 12
+chunks instead of 5, so a lower-reranked chunk with a strong QA answer can take first place, and each search is about 0.5 s
+slower. Lower `MAX_RESULTS` to trade the longest lists for speed.
 
 ### 8.9 Eval-set growth over the project
 
@@ -1302,6 +1340,8 @@ All settings are environment variables, read at import time into the frozen `Set
 | `QA_EXTRA_CANDIDATES` | `2` | Extra chunks sent to QA beyond `top_k` |
 | `QA_RANK_WEIGHT` | `0.3` | Weight $w$ of the QA score in the final score |
 | `MIN_QA_SCORE` | `0.0` | Drop QA results below this score |
+| `RESULT_RELATIVE_SCORE` | `0.4` | Without `top_k`: keep hits scoring at least this share of the best hit's final score |
+| `MAX_RESULTS` | `10` | Without `top_k`: most results returned |
 | `EXCLUDE_EXERCISES` | `true` | Hide exercise / question-bank chunks |
 
 ### Romanized queries

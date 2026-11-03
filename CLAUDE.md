@@ -42,6 +42,10 @@ Chunks get an `is_exercise` flag (`utils.is_exercise_chunk`, a deliberately cons
 
 Changing the ES mapping or embedding dim generally requires recreating the index (`db_init.py` only creates it if absent) and re-ingesting. Adding subfields is the exception: `db_init.py` puts the `text.bn|hi|en` multi-fields on an existing index and `src/reindex_es.py` fills them for existing docs via `_update_by_query` (no re-embedding; only docs missing `text.en` unless `--all`).
 
+## Rich results (website)
+
+`/api/search/rich` (the web UI; `/api/search` is unchanged) adds per-hit `kind`, `blocks` (definition/list/code), `figures`, `tables`, `formulas`, `page` (image + highlight rects as page fractions) and a top-level `layout` (`answer|visual|table|compare|steps`). `src/page_assets.py` (PyMuPDF heuristics) analyses each page once into `ASSET_DIR/<file_hash>/p{N}.json` + WebP crops, served by `/data/assets/<hash>/<name>.webp` (only `p\d+(-[ftm]\d+)?.webp`; the JSON stays private). Built at ingestion, by `src/build_page_assets.py` for existing books, or lazily per page by a search; bump `ASSET_VERSION` after changing the extractor so cached pages rebuild. Pages without a usable text layer are OCRed on first display (`add_ocr_text`) for highlighting. `src/layout.py` is model- and PDF-free (quote alignment, list/code/definition detection, asset ranking, `choose_layout`); test it with hand-written page dicts (`tests/test_layout.py`); `tests/test_page_assets.py` builds a synthetic PDF. PyMuPDF calls in the API process go through `page_assets._RENDER_LOCK`. Frontend: `components/layouts/ResultsView.tsx` switches on `layout.kind`; blocks in `components/blocks/`; non-component helpers live in `lib/results.ts` (react-refresh lint rule).
+
 ## Evaluating search changes
 
 `tests/eval_search.py` runs 109 hand-labelled questions (`tests/eval/questions.json`, expected file + page set + answer keyword; an optional `group` such as `hi->en`, `roman-bn`, `mixed` or `rare-en` overrides `lang` in the per-group hit@3 breakdown) against the live ingested corpus and reports hit@k / MRR:

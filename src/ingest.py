@@ -186,6 +186,21 @@ def update_chunk_es_doc_id(connection, chunk_id: int, es_doc_id: str) -> None:
         cursor.execute("UPDATE chunks SET es_doc_id = %s WHERE id = %s", (es_doc_id, chunk_id))
 
 
+def build_page_assets(local_file: str, file_hash: str) -> None:
+    """Pre-build the figures / tables / page images the web UI shows (failures only cost that; see page_assets)."""
+    if not (settings.page_assets and settings.page_assets_at_ingest):
+        return
+    import page_assets  # pylint: disable=import-outside-toplevel
+
+    started = time.monotonic()
+    try:
+        built = page_assets.build_pages(local_file, file_hash, log=print)
+    except Exception as exc:  # pylint: disable=broad-except
+        print(f"[OSISS] Page assets skipped for '{os.path.basename(local_file)}': {exc}")
+        return
+    print(f"[OSISS] Page assets: {built} page(s) analysed in {time.monotonic() - started:.0f}s.")
+
+
 def process_pdf(
     file_path: str,
     connection,
@@ -209,6 +224,8 @@ def process_pdf(
         metadata = dict(metadata) if metadata else infer_metadata_from_filename(file_path)
         with get_storage().local_copy(file_path) as local_file:
             pages = extract_pdf_pages(local_file)
+            if pages:
+                build_page_assets(local_file, file_hash)
         if not pages:
             return False, f"No readable text found in '{file_path}'."
 

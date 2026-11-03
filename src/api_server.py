@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 import sys
 import threading
 import time
@@ -22,7 +23,9 @@ if CURRENT_DIR not in sys.path:
 
 import admin
 import admin_api
+import layout
 import load_control
+import page_assets
 import replica
 import runtime_config
 from config import settings
@@ -200,6 +203,21 @@ async def public_access(request: Request, call_next):
     return response
 
 
+ASSET_HASH_RE = re.compile(r"^[0-9a-f]{64}$")
+ASSET_NAME_RE = re.compile(r"^p\d+(?:-[ftm]\d+)?\.webp$")
+
+
+@app.api_route("/data/assets/{file_hash}/{name}", methods=["GET", "HEAD"])
+def serve_asset(file_hash: str, name: str):
+    """Figure / table / formula crops and page images cut from the PDFs (see page_assets). Same access rule as PDFs."""
+    if not ASSET_HASH_RE.match(file_hash) or not ASSET_NAME_RE.match(name):
+        raise HTTPException(404, "Not found")
+    target = os.path.join(page_assets.book_dir(file_hash), name)
+    if not os.path.isfile(target):
+        raise HTTPException(404, "Not found")
+    return FileResponse(target, media_type="image/webp", headers={"Cache-Control": "public, max-age=86400"})
+
+
 @app.api_route("/data/{file_path:path}", methods=["GET", "HEAD"])
 def serve_pdf(file_path: str, request: Request):
     """Serve PDFs from PDF_DIR only (not other files under data/, such as admin settings or staged uploads).
@@ -269,6 +287,29 @@ class SearchResponse(BaseModel):
     results: List[SearchResultItem]
 
 
+class RichResultItem(SearchResultItem):
+    """A result plus the page content the web UI lays out (see layout.py)."""
+
+    kind: str = "text"
+    blocks: List[Dict[str, Any]] = Field(default_factory=list)
+    figures: List[Dict[str, Any]] = Field(default_factory=list)
+    tables: List[Dict[str, Any]] = Field(default_factory=list)
+    formulas: List[Dict[str, Any]] = Field(default_factory=list)
+    page: Optional[Dict[str, Any]] = None
+
+
+class LayoutInfo(BaseModel):
+    kind: str
+    hero: Optional[int] = None
+    intents: List[str] = Field(default_factory=list)
+
+
+class RichSearchResponse(BaseModel):
+    query: str
+    layout: LayoutInfo
+    results: List[RichResultItem]
+
+
 def map_result(item: Dict[str, Any]) -> SearchResultItem:
     """Map internal search result to API response contract."""
     source = item.get("source", {})
@@ -310,9 +351,8 @@ def refuse(status: int, detail: str, retry_after: float) -> JSONResponse:
     return JSONResponse({"detail": detail}, status_code=status, headers={"Retry-After": str(max(1, round(retry_after)))})
 
 
-@app.post("/api/search", response_model=SearchResponse)
-async def api_search(payload: SearchRequest, request: Request):
-    """Execute semantic retrieval + extractive QA and return normalized results.
+async def run_search(payload: SearchRequest, request: Request):
+    """Rate limit, answer cache, search queue and the pipeline; returns the pipeline result or a refusal Response.
 
     Order: per-client rate limit (429) -> answer cache -> search queue (503 when full) -> the pipeline in a worker
     thread. See README "Capacity and load".
@@ -341,8 +381,55 @@ async def api_search(payload: SearchRequest, request: Request):
             raise HTTPException(status_code=500, detail=f"Search execution failed: {exc}") from exc
         load_control.cache.put(cache_key, result)
     load_control.metrics.record(time.perf_counter() - started, cached, timings)
+    return result
+
+
+@app.post("/api/search", response_model=SearchResponse)
+async def api_search(payload: SearchRequest, request: Request):
+    """Execute semantic retrieval + extractive QA and return normalized results."""
+    result = await run_search(payload, request)
+    if isinstance(result, Response):
+        return result
     mapped = [map_result(item) for item in result.get("results", [])]
     return SearchResponse(query=result.get("query", payload.query), results=mapped)
+
+
+def book_hashes(file_paths: List[str]) -> Dict[str, str]:
+    """file_path -> content hash (the page-asset cache key) for the books in a result list."""
+    paths = sorted({path for path in file_paths if path})
+    if not paths:
+        return {}
+    try:
+        with db() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute("SELECT file_path, file_hash FROM books WHERE file_path = ANY(%s)", (paths,))
+                rows = cursor.fetchall()
+    except Exception as exc:  # pylint: disable=broad-except
+        print(f"[OSISS] Book hashes unavailable (no page content in results): {exc}")
+        return {}
+    return {path: file_hash for path, file_hash in rows if file_hash}
+
+
+def enrich(query: str, items: List[Dict[str, Any]]) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
+    if not settings.page_assets:
+        return layout.enrich_results(query, items, {}, None, page_assets.asset_url)
+    hashes = book_hashes([item.get("source", {}).get("file_path") for item in items])
+    ocr = page_assets.add_ocr_text if settings.ocr_highlight else None
+    return layout.enrich_results(query, items, hashes, page_assets.ensure_pages, page_assets.asset_url, ocr_page=ocr)
+
+
+@app.post("/api/search/rich", response_model=RichSearchResponse)
+async def api_search_rich(payload: SearchRequest, request: Request):
+    """Like /api/search, plus figures, tables, formulas, structured blocks, a page image with the hit highlighted
+    and a suggested layout. Used by the web UI; the plain endpoint's contract is unchanged."""
+    result = await run_search(payload, request)
+    if isinstance(result, Response):
+        return result
+    items = result.get("results", [])
+    query = result.get("query", payload.query)
+    rich, layout_info = await run_in_threadpool(enrich, query, items)
+    results = [RichResultItem(**map_result(item).model_dump(), **extra) for item, extra in zip(items, rich)]
+    return RichSearchResponse(query=query, layout=LayoutInfo(**layout_info), results=results)
 
 
 if settings.serve_frontend and os.path.isdir(FRONTEND_DIST):

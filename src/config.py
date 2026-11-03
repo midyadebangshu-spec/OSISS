@@ -159,5 +159,17 @@ class Settings:
     pdf_serve_mode: str = os.getenv("PDF_SERVE_MODE", "redirect").lower()
     s3_url_expiry_seconds: int = int(os.getenv("S3_URL_EXPIRY_SECONDS", "900"))
 
+    # Rich results (figures, tables, formulas, page images) for the search UI; see src/page_assets.py.
+    page_assets: bool = os.getenv("PAGE_ASSETS", "true").lower() in {"1", "true", "yes"}
+    # Cache of extracted page content, one folder per PDF content hash. May be a shared mount for several copies.
+    asset_dir: str = os.getenv("ASSET_DIR", "./data/assets")
+    # Analyse every page while ingesting (otherwise pages are analysed the first time a search needs them).
+    page_assets_at_ingest: bool = os.getenv("PAGE_ASSETS_AT_INGEST", "true").lower() in {"1", "true", "yes"}
+    asset_dpi: int = int(os.getenv("ASSET_DPI", "150"))
+    page_image_dpi: int = int(os.getenv("PAGE_IMAGE_DPI", "110"))
+    # Pages without a usable text layer are OCRed (once, then cached) when a search shows them, to highlight the hit.
+    ocr_highlight: bool = os.getenv("OCR_HIGHLIGHT", "true").lower() in {"1", "true", "yes"}
+    ocr_highlight_dpi: int = int(os.getenv("OCR_HIGHLIGHT_DPI", "200"))
+
 
 settings = Settings()

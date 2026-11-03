@@ -23,6 +23,7 @@ data/pdfs/*
 !data/pdfs/.gitkeep
 data/uploads/
 data/admin/
+data/assets/
 models/*
 !models/.gitkeep
 

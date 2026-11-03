@@ -1,28 +1,33 @@
-import { useMemo, useState } from 'react'
+import { useCallback, useMemo, useState } from 'react'
 import type { FormEvent } from 'react'
-import { Search } from 'lucide-react'
-import { ResultCard } from './components/ResultCard'
+import { Search, X } from 'lucide-react'
+import { Lightbox } from './components/Lightbox'
 import { ResultSkeleton } from './components/ResultSkeleton'
+import { ResultsView } from './components/layouts/ResultsView'
 import { searchRecords } from './lib/searchApi'
-import type { SearchResult } from './types/search'
+import { ViewerContext } from './lib/viewer'
+import type { LightboxItem, Viewer } from './lib/viewer'
+import type { Layout, PagePreview, SearchResult } from './types/search'
 
 const EXAMPLE_QUERIES = [
   'What is the boiling point of water?',
   'আলোর প্রতিফলন কাকে বলে?',
   'ऊष्मागतिकी की परिभाषा क्या है?',
+  'Diagram of a linked list',
+  'Difference between stack and queue',
 ]
+
+const EMPTY_LAYOUT: Layout = { kind: 'empty', hero: null, intents: [] }
 
 function App() {
   const [query, setQuery] = useState('')
   const [results, setResults] = useState<SearchResult[]>([])
+  const [layout, setLayout] = useState<Layout>(EMPTY_LAYOUT)
+  const [lightbox, setLightbox] = useState<{ items: LightboxItem[]; index: number } | null>(null)
   const [isLoading, setIsLoading] = useState(false)
   const [hasSearched, setHasSearched] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [preview, setPreview] = useState<{
-    pdfLink: string
-    pageNumber: number
-    title: string
-  } | null>(null)
+  const [preview, setPreview] = useState<PagePreview | null>(null)
 
   const isSearchDisabled = useMemo(() => query.trim().length === 0 || isLoading, [query, isLoading])
 
@@ -39,11 +44,13 @@ function App() {
     try {
       const data = await searchRecords(cleaned)
       setResults(data.results)
+      setLayout(data.layout)
       if (data.results.length === 0) {
         setPreview(null)
       }
     } catch (searchError) {
       setResults([])
+      setLayout(EMPTY_LAYOUT)
       setPreview(null)
       setError(searchError instanceof Error ? searchError.message : 'Search request failed.')
     } finally {
@@ -61,25 +68,33 @@ function App() {
     await runSearch(example)
   }
 
-  const onTogglePreview = (result: SearchResult) => {
-    const samePage = preview?.pdfLink === result.pdf_link && preview?.pageNumber === result.page_number
-    if (samePage) {
-      setPreview(null)
-      return
-    }
+  const togglePage = useCallback((next: PagePreview) => {
+    setPreview((current) =>
+      current?.pdfLink === next.pdfLink && current?.pageNumber === next.pageNumber ? null : next,
+    )
+  }, [])
 
-    setPreview({
-      pdfLink: result.pdf_link,
-      pageNumber: result.page_number,
-      title: result.book_title,
-    })
-  }
+  const viewer = useMemo<Viewer>(
+    () => ({
+      openLightbox: (items, index) => setLightbox({ items, index }),
+      togglePage,
+      isPageOpen: (pdfLink, pageNumber) => preview?.pdfLink === pdfLink && preview?.pageNumber === pageNumber,
+    }),
+    [preview, togglePage],
+  )
+
+  const closeLightbox = useCallback(() => setLightbox(null), [])
+  const setLightboxIndex = useCallback(
+    (index: number) => setLightbox((current) => (current ? { ...current, index } : current)),
+    [],
+  )
 
   const buildPreviewSrc = (value: NonNullable<typeof preview>) => {
     return `${value.pdfLink}#page=${value.pageNumber}`
   }
 
   return (
+    <ViewerContext.Provider value={viewer}>
     <main className="min-h-screen bg-white text-zinc-950">
       <div className="w-full px-4 py-4 md:px-6 md:py-5">
         {!hasSearched ? (
@@ -153,9 +168,7 @@ function App() {
             </header>
 
             <div className={`grid gap-4 ${preview ? 'xl:grid-cols-[minmax(0,1fr)_36vw]' : 'grid-cols-1'}`}>
-              <div className="space-y-4">
-                <h2 className="text-lg font-semibold tracking-tight">Database Hits</h2>
-
+              <div className="min-w-0 space-y-4">
                 {isLoading && (
                   <div className="space-y-3">
                     <ResultSkeleton />
@@ -172,23 +185,19 @@ function App() {
                   <div className="border-2 border-zinc-950 bg-white p-4 text-sm text-zinc-800">No matching records found for this query.</div>
                 )}
 
-                {!isLoading &&
-                  !error &&
-                  results.map((result, index) => (
-                    <ResultCard
-                      key={`${result.book_title}-${index}`}
-                      result={result}
-                      onViewPage={onTogglePreview}
-                      isPreviewOpen={preview?.pdfLink === result.pdf_link && preview?.pageNumber === result.page_number}
-                    />
-                  ))}
+                {!isLoading && !error && results.length > 0 && <ResultsView results={results} layout={layout} />}
               </div>
 
               {preview && (
                 <aside className="sticky top-20 h-[calc(100vh-6rem)] border-2 border-zinc-950 bg-white">
-                  <div className="border-b border-zinc-950 px-3 py-2">
-                    <p className="text-xs uppercase tracking-[0.15em] text-zinc-500">Page Viewer</p>
-                    <p className="truncate text-sm font-medium">{preview.title} · Page {preview.pageNumber}</p>
+                  <div className="flex items-start justify-between gap-2 border-b border-zinc-950 px-3 py-2">
+                    <div className="min-w-0">
+                      <p className="text-xs uppercase tracking-[0.15em] text-zinc-500">PDF Viewer</p>
+                      <p className="truncate text-sm font-medium">{preview.title} · Page {preview.pageNumber}</p>
+                    </div>
+                    <button type="button" onClick={() => setPreview(null)} className="shrink-0 p-1 hover:bg-zinc-100" aria-label="Close PDF viewer">
+                      <X className="h-4 w-4" />
+                    </button>
                   </div>
                   <iframe
                     title="Document page preview"
@@ -201,7 +210,11 @@ function App() {
           </section>
         )}
       </div>
+      {lightbox && (
+        <Lightbox items={lightbox.items} index={lightbox.index} onIndex={setLightboxIndex} onClose={closeLightbox} />
+      )}
     </main>
+    </ViewerContext.Provider>
   )
 }
 

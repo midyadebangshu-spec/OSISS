@@ -220,6 +220,10 @@ Every step names the setting that controls it (see [section 12](#12-configuratio
 11. **Display** (frontend): the paragraph is cleaned for reading (bullets become list items, stray spaces and control characters are
     removed), the quoted sentence is highlighted lightly and the exact QA answer phrase strongly. Answers with a QA score below 0.02
     are not highlighted, because they are near-random spans.
+12. **Rich layout** (`/api/search/rich`, used by the website): each hit gets the figures, tables and equations of its page, a
+    definition / list / code block cut from the book where one fits, and the page image with the quoted sentence marked; the
+    response suggests a layout from the question (answer, figures, table, side by side, step by step). See
+    [8.10](#810-rich-results-figures-tables-equations-and-layouts).
 
 ### API
 
@@ -227,6 +231,8 @@ Every step names the setting that controls it (see [section 12](#12-configuratio
 |---|---|
 | `GET /health` | liveness check (`{status, version, admin_enabled}`) |
 | `POST /api/search` `{query, top_k}` | returns `{exact_quote, book_title, author, department, page_number, pdf_link, paragraph_text, answer_text}` per result |
+| `POST /api/search/rich` `{query, top_k}` | the same fields plus `kind`, `blocks`, `figures`, `tables`, `formulas`, `page` per result and a top-level `layout` (see [8.10](#810-rich-results-figures-tables-equations-and-layouts)) |
+| `GET /data/assets/<hash>/<name>.webp` | figure, table and equation crops and page images cut from the PDFs (same access rule as PDFs) |
 | `GET /data/pdfs/<file>.pdf` | PDFs from `PDF_DIR` only (opened by the page viewer at `#page=N`) |
 | `GET /ready` | load-balancer health check: 200 when this copy can answer searches, else 503 with the failing check |
 | `/api/admin/*` | admin API for the desktop admin app, behind `ADMIN_TOKEN` (see [section 11](#11-using-the-admin-app-step-by-step)) |
@@ -545,6 +551,50 @@ strongly highlighted, the surrounding text is muted, and the page number sits in
 (keeping the zero-width joiners Bengali and Hindi need), and drops a lone page-number-like token at the edge of the excerpt. `*` is only treated as a bullet before Bengali/Hindi text, because it means pointer or multiplication in the programming books.
 The API sends the QA span as `answer_text`.
 
+### 8.10 Rich results: figures, tables, equations and layouts
+
+The website shows more of the book than the quote: the figures, tables and equations near the hit, a definition, list or code
+listing cut from the page, and the page itself with the sentence marked. Everything is still extractive, cut from the PDF,
+nothing generated.
+
+**Page analysis** (`src/page_assets.py`, PyMuPDF only). Each page is analysed once and cached under `ASSET_DIR/<file SHA-256>/`
+(`p12.json` plus WebP crops `p12-f1.webp` figure, `-t1` table, `-m1` equation and `p12.webp` the page). Keyed by content hash, so
+the cache survives re-ingestion and metadata edits. It finds:
+
+* **Figures**: embedded raster images and clusters of vector drawings (`cluster_drawings`), merged when they touch, grown to take
+  in short labels at their edges, with the nearest "Fig. 3.2" / "চিত্র ৩.২" / "चित्र 3.2" caption line attached. It skips
+  page-sized backgrounds and scans, header/footer ornaments, chapter-title banners (text ≥ 1.8× body size), framed prose
+  ("Activity" panels, tips; long lines, no figure caption below) and shaded code listings.
+* **Tables**: `find_tables`, kept only when it is a grid of short cell text (each column filled in at least two rows);
+  data-structure drawings (array cells, list nodes) that look like tables become figures. A shaded table without ruling lines
+  is recognised by its "Table n" / "সারণি" / "सारणी" caption and read with the text strategy.
+* **Equations**: lines dense in math symbols or arrows with at most a few prose words (`F = m × a`,
+  `Zn + H2SO4 → ZnSO4 + H2`), not code (`int x = 5;`) or sentence tails. Shown as image crops, because PDF text of formulas is
+  unreliable.
+* **Text lines and words** with positions and a monospace flag, for highlighting and for lists and code. Legacy-font pages
+  (Kruti Dev, Bijoy; `classify_text_layer` says "bad") keep figures but get no text, tables or equations.
+
+Pages without a usable text layer (scans, text in images, legacy fonts) are OCRed **when a search first shows them**
+(`OCR_HIGHLIGHT`, in the quote's language, cached in the page JSON), so the sentence can be marked there too. That costs
+a few seconds per page the first time.
+
+**Building a result** (`src/layout.py`, model- and PDF-free). The quote is aligned to the page words (`difflib`) to get highlight
+rectangles. Around those lines it looks for a code listing (monospace or C-like lines, indentation rebuilt from x positions),
+a bulleted or numbered list (or an inline "(i) … (ii) … (iii)" enumeration, keeping the book's own markers), and a definition
+sentence ("X is …", "… is called X", "…কে X বলে", "…को X कहते हैं") whose term matches the question; letter-spaced words
+("p ointer") are rejoined and a heading glued to the term is dropped. Figures and tables are ranked: referenced in the passage
+(also on the neighbouring pages) > caption words in the question > near the hit. Uncaptioned wide strips (banners, text
+panels baked into images) are not shown.
+
+**Layout** (`choose_layout`): from the question's intent (diagram / difference / how / what is / program, in English, Bengali
+and Hindi) and what the hits contain: **visual** (figure gallery, the best figure large), **table** (a comparison answered by a
+table), **compare** (best passage from each book side by side; books are told apart by file, since guessed titles collide),
+**steps** (a list or code listing leads) or **answer** (best hit large with its figure or the marked page). `/api/search` is
+unchanged; the website calls `/api/search/rich` and falls back to it on older servers.
+
+Building every page of the 17-book corpus (5,485 pages) takes about 3 minutes with 8 processes and 620 MB of disk. New books
+are analysed while ingesting; `src/build_page_assets.py` does existing books; searches build missing pages on demand.
+
 ### 8.9 Eval-set growth over the project
 
 Each row is a different question set, so the rows are not directly comparable; they show what each change did on the set that existed at the time.
@@ -667,6 +717,7 @@ drop from 0.90 to 0.50 hit@3 that way).
 | Initialise or upgrade schema | `.venv/bin/python src/db_init.py` (idempotent) |
 | Fill language subfields on old data | `.venv/bin/python src/reindex_es.py` (`--all` re-indexes everything) |
 | Re-apply the exercise heuristic | `.venv/bin/python src/backfill_exercise_flags.py [--dry-run --samples 3]` |
+| Build figures / tables / page images for existing books | `.venv/bin/python src/build_page_assets.py [--only NAME] [--force] [--prune]` |
 | Download models | `.venv/bin/python src/download_models.py` |
 | Frontend lint and build | `cd frontend && npm run lint && npm run build` |
 
@@ -686,6 +737,8 @@ three ways to run OSISS (one computer, campus network, public website) are descr
 * `docker-compose.yml` now publishes PostgreSQL (5433) and Elasticsearch (9200) on `127.0.0.1` only. Run
   `docker compose up -d postgres elasticsearch` once to apply it. Nothing in OSISS needs them from another machine.
 * Changing the Elasticsearch mapping or the embedding dimension generally means recreating the index and re-ingesting; chunk-boundary changes only affect books that are re-ingested.
+* Run `src/build_page_assets.py` once so results show figures, tables and page images straight away (otherwise each page is
+  built the first time a search shows it). `--prune` removes folders of deleted books.
 
 ---
 
@@ -1277,6 +1330,18 @@ All settings are environment variables, read at import time into the frozen `Set
 | `OCR_LANGUAGES` | `ben+hin+eng` | Tesseract languages used to probe a book's script |
 | `OCR_WORKERS` | `8` | OCR threads (about 4 pages/s with 20) |
 
+### Rich results (figures, tables, page images)
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `PAGE_ASSETS` | `true` | Add figures, tables, equations, blocks and page images to `/api/search/rich` |
+| `ASSET_DIR` | `./data/assets` | Cache of analysed pages, one folder per PDF content hash (a shared mount works for several copies) |
+| `PAGE_ASSETS_AT_INGEST` | `true` | Analyse every page while ingesting (otherwise on first use) |
+| `ASSET_DPI` | `150` | Resolution of figure and table crops (equations use at least 200) |
+| `PAGE_IMAGE_DPI` | `110` | Resolution of page images |
+| `OCR_HIGHLIGHT` | `true` | OCR pages without a usable text layer when a search shows them, to mark the hit |
+| `OCR_HIGHLIGHT_DPI` | `200` | Render resolution for that OCR |
+
 ### Infrastructure and models
 
 | Variable | Default |
@@ -1356,7 +1421,7 @@ which wins over the environment. `MODEL_PRECISION` and `SEARCH_CONCURRENCY` need
 
 ```
 src/
-  api_server.py            FastAPI app: /health, /api/search, /data PDFs, search access + CORS
+  api_server.py            FastAPI app: /health, /api/search(/rich), /data PDFs and page assets, search access + CORS
   admin_api.py             /api/admin/* routes (token auth, lockout, IP allowlist)
   admin.py                 book metadata, delete/restore, API keys (PostgreSQL + Elasticsearch)
   ingest_worker.py         in-process ingestion worker: jobs, polling, maintenance scripts, log
@@ -1369,6 +1434,8 @@ src/
   sync_models.py           copies models/ to or from S3
   search.py                search pipeline: retrieve, fuse, rerank, diversify, QA, quote extraction
   ranking.py               model-free helpers: query cleanup, RRF, MMR, dedupe, QA windows
+  page_assets.py           per-page figures, tables, equations, text positions and page images (cached by file hash)
+  layout.py                rich results: highlights, definition/list/code blocks, figure ranking, layout choice
   translit.py              romanized-query detection and IndicXlit transliteration
   ingest.py                ingestion pipeline (watcher or --once, --only)
   utils.py                 PDF extraction, OCR fallback, chunking, language and exercise heuristics
@@ -1379,9 +1446,13 @@ src/
   build_english_vocab.py   builds models/english_vocab.txt
   reindex_es.py            fills language subfields on existing documents
   backfill_exercise_flags.py  re-applies the exercise heuristic in place
+  build_page_assets.py     builds page assets for already ingested books (--only, --force, --prune)
   wait_for_services.py     waits for Postgres and Elasticsearch
 frontend/                  React + TypeScript + Tailwind UI
-  src/components/ResultCard.tsx   result card with highlighted paragraph
+  src/components/layouts/ResultsView.tsx   arranges hits by the suggested layout (answer, visual, table, compare, steps)
+  src/components/ResultCard.tsx   result card: lead block, highlighted paragraph, figures, tables, equations, page
+  src/components/blocks/          definition / list / code views, figure / table / equation / page views
+  src/components/Lightbox.tsx     full-screen figure and page viewer
   src/lib/searchApi.ts            API client and response normalisation
   src/lib/textFormat.ts           display cleanup and quote/answer highlighting
 admin/                     Electron admin app (React + TypeScript + Tailwind)
@@ -1400,6 +1471,7 @@ docs/
   images/                  the graphs
   images/admin/            admin app screenshots used in section 11
 data/pdfs/                 source PDFs (git-ignored)
+data/assets/               analysed pages: crops, page images, JSON (git-ignored)
 models/                    local model cache (git-ignored)
 docker-compose.yml         Postgres + Elasticsearch (published on 127.0.0.1 only)
 Dockerfile                 API image (website built in, Tesseract with ben/hin, /ready health check)

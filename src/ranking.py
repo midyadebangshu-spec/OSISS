@@ -174,6 +174,18 @@ def mmr_select(candidates: List[Dict], limit: int, lambda_: float) -> List[Dict]
     return [candidates[idx] for idx in selected]
 
 
+def cut_by_relative_score(results: List[Dict], score, ratio: float, limit: int) -> List[Dict]:
+    """Best-first `results` scoring at least `ratio` x the best one's `score(item)`, at most `limit`, at least one.
+
+    Relative rather than absolute: final scores swing a lot between questions, so a fixed cut-off drops correct
+    answers to hard questions while still letting weak hits through on easy ones.
+    """
+    if not results:
+        return []
+    floor = ratio * score(results[0])
+    return [item for index, item in enumerate(results[:limit]) if index == 0 or score(item) >= floor]
+
+
 def plan_token_windows(word_token_counts: Sequence[int], budget: int, stride: int) -> List[Tuple[int, int]]:
     """Split words into (start, end) word ranges that fit `budget` tokens.
 

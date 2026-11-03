@@ -40,6 +40,11 @@ FIELDS: Dict[str, Field] = {
     "retrieval_candidates": Field("int", "search", "Retrieval candidates", "Chunks fetched before rerank.", 5, 200),
     "qa_extra_candidates": Field("int", "search", "Extra QA candidates", "Chunks read by QA beyond top_k.", 0, 10),
     "min_qa_score": Field("float", "search", "Minimum QA score", "Results below this are dropped.", 0.0, 1.0),
+    "result_relative_score": Field(
+        "float", "search", "Result threshold (share of best score)",
+        "Searches without top_k (the website) show hits scoring at least this share of the best one.", 0.0, 1.0,
+    ),
+    "max_results": Field("int", "search", "Most results", "Upper limit for searches without top_k.", 1, 10),
     "hybrid_mode": Field("choice", "search", "Hybrid mode", "rrf = rank fusion, sum = additive scores.",
                          choices=("rrf", "sum")),
     "mmr_lambda": Field("float", "search", "MMR lambda", "1.0 = no diversification.", 0.0, 1.0),

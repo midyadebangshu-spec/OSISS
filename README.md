@@ -183,6 +183,19 @@ PDF → text (or OCR) → per-page word chunks → embeddings → PostgreSQL row
 | Science Class 7 (Hindi) | hi | 260 | 364 | **full-page OCR** (Kruti Dev) |
 | NCERT Science Class X (Hindi), two editions | hi | 324 / 325 | 524 / 508 | **full-page OCR** (Kruti Dev / symbol font) |
 | Vigyan Class 10 (Hindi, reduced) | hi | 360 | 570 | **full-page OCR** (Kruti Dev) |
+| OpenStax *Chemistry 2e* | en | 1,203 | 1,946 | text layer |
+| OpenStax *Physics* | en | 875 | 1,591 | text layer |
+| OpenStax *Introduction to Computer Science* | en | 939 | 1,758 | text layer |
+| OpenStax *Concepts of Biology* | en | 613 | 1,159 | text layer |
+| NCERT Science Class 10 (English) | en | 232 | 396 | text layer |
+| NCERT Science Class 7 (English, older edition) | en | 184 | 232 | text layer |
+| Pat Morin, *Open Data Structures* (C++) | en | 336 | 383 | text layer |
+
+The last seven were added for the Context Explorer: they overlap the existing books (the NCERT ones are the English
+editions of the Hindi Class 10 and Class 7 books), so concepts link across books and languages. OpenStax and Open Data
+Structures are CC BY; the NCERT books are free to download for educational use (ncert.nic.in serves an incomplete TLS
+chain; fetch Let's Encrypt's YE1 intermediate rather than disabling certificate checks). The NCERT downloads are zips
+of chapter PDFs, merged into one PDF per book before ingesting. The evaluation numbers above predate these books.
 
 ---
 
@@ -211,22 +224,34 @@ Every step names the setting that controls it (see [section 12](#12-configuratio
 5. **Fuse with Reciprocal Rank Fusion** (`HYBRID_MODE=rrf`): chunks are ranked by their ranks in the two lists, not by raw scores.
 6. **Rerank** the fused candidates with the cross-encoder `bge-reranker-v2-m3` (`RERANK_ENABLED`). This is the most important quality step.
 7. **Diversify:** keep the best chunk per (book, page), drop near-duplicates (Jaccard ≥ 0.8, for example another edition of the same
-   text), then choose `top_k + QA_EXTRA_CANDIDATES` chunks with Maximal Marginal Relevance (`MMR_LAMBDA`).
+   text), then choose `top_k + QA_EXTRA_CANDIDATES` chunks (`MAX_RESULTS + QA_EXTRA_CANDIDATES` without `top_k`) with Maximal Marginal Relevance (`MMR_LAMBDA`).
 8. **Extractive QA** on those chunks: `xlm-roberta-large-squad2` finds the most probable answer span. Long chunks are read in
    384-token windows with stride 128 so the answer is never cut off.
 9. **Quote and paragraph.** The sentence containing the answer span becomes the quote; neighbouring sentences (up to about 140
    words) form the matched paragraph.
-10. **Final score and order:** `(1 − w)·rerank + w·QA` with `QA_RANK_WEIGHT` w = 0.3; the best `top_k` (default 3) are returned.
+10. **Final score and order:** `(1 − w)·rerank + w·QA` with `QA_RANK_WEIGHT` w = 0.3. With `top_k` the best `top_k` are returned;
+    without it (the website) every hit scoring at least `RESULT_RELATIVE_SCORE` (0.4) × the best hit's score, up to
+    `MAX_RESULTS` (10), so a clear answer is one result and a question several books answer gets several
+    ([8.11](#811-how-many-results-a-relative-score-threshold)).
 11. **Display** (frontend): the paragraph is cleaned for reading (bullets become list items, stray spaces and control characters are
     removed), the quoted sentence is highlighted lightly and the exact QA answer phrase strongly. Answers with a QA score below 0.02
     are not highlighted, because they are near-random spans.
+12. **Rich layout** (`/api/search/rich`, used by the website): each hit gets the figures, tables and equations of its page, a
+    definition / list / code block cut from the book where one fits, and the page image with the quoted sentence marked; the
+    response suggests a layout from the question (answer, figures, table, side by side, step by step). See
+    [8.10](#810-rich-results-figures-tables-equations-and-layouts).
 
 ### API
 
 | Endpoint | |
 |---|---|
 | `GET /health` | liveness check (`{status, version, admin_enabled}`) |
-| `POST /api/search` `{query, top_k}` | returns `{exact_quote, book_title, author, department, page_number, pdf_link, paragraph_text, answer_text}` per result |
+| `POST /api/search` `{query, top_k?}` | returns `{exact_quote, book_title, author, department, page_number, pdf_link, paragraph_text, answer_text}` per result |
+| `POST /api/search/rich` `{query, top_k?}` | the same fields plus `kind`, `blocks`, `figures`, `tables`, `formulas`, `page` per result and a top-level `layout` (see [8.10](#810-rich-results-figures-tables-equations-and-layouts)) |
+| `GET /api/concepts?q=` | Context Explorer: concepts matching `q` (any language), or the best-defined ones without `q` |
+| `GET /api/concepts/<id>` | a concept: names, books and pages, definitions per book, neighbours with relation and order, figures |
+| `GET /api/concepts/<a>/links/<b>` | the evidence sentences (book, page) behind a link |
+| `GET /data/assets/<hash>/<name>.webp` | figure, table and equation crops and page images cut from the PDFs (same access rule as PDFs) |
 | `GET /data/pdfs/<file>.pdf` | PDFs from `PDF_DIR` only (opened by the page viewer at `#page=N`) |
 | `GET /ready` | load-balancer health check: 200 when this copy can answer searches, else 503 with the failing check |
 | `/api/admin/*` | admin API for the desktop admin app, behind `ADMIN_TOKEN` (see [section 11](#11-using-the-admin-app-step-by-step)) |
@@ -545,6 +570,121 @@ strongly highlighted, the surrounding text is muted, and the page number sits in
 (keeping the zero-width joiners Bengali and Hindi need), and drops a lone page-number-like token at the edge of the excerpt. `*` is only treated as a bullet before Bengali/Hindi text, because it means pointer or multiplication in the programming books.
 The API sends the QA span as `answer_text`.
 
+### 8.10 Rich results: figures, tables, equations and layouts
+
+The website shows more of the book than the quote: the figures, tables and equations near the hit, a definition, list or code
+listing cut from the page, and the page itself with the sentence marked. Everything is still extractive, cut from the PDF,
+nothing generated.
+
+**Page analysis** (`src/page_assets.py`, PyMuPDF only). Each page is analysed once and cached under `ASSET_DIR/<file SHA-256>/`
+(`p12.json` plus WebP crops `p12-f1.webp` figure, `-t1` table, `-m1` equation and `p12.webp` the page). Keyed by content hash, so
+the cache survives re-ingestion and metadata edits. It finds:
+
+* **Figures**: embedded raster images and clusters of vector drawings (`cluster_drawings`), merged when they touch, grown to take
+  in short labels at their edges, with the nearest "Fig. 3.2" / "চিত্র ৩.২" / "चित्र 3.2" caption line attached. It skips
+  page-sized backgrounds and scans, header/footer ornaments, chapter-title banners (text ≥ 1.8× body size), framed prose
+  ("Activity" panels, tips; long lines, no figure caption below) and shaded code listings.
+* **Tables**: `find_tables`, kept only when it is a grid of short cell text (each column filled in at least two rows);
+  data-structure drawings (array cells, list nodes) that look like tables become figures. A shaded table without ruling lines
+  is recognised by its "Table n" / "সারণি" / "सारणी" caption and read with the text strategy.
+* **Equations**: lines dense in math symbols or arrows with at most a few prose words (`F = m × a`,
+  `Zn + H2SO4 → ZnSO4 + H2`), not code (`int x = 5;`) or sentence tails. Shown as image crops, because PDF text of formulas is
+  unreliable.
+* **Text lines and words** with positions and a monospace flag, for highlighting and for lists and code. Legacy-font pages
+  (Kruti Dev, Bijoy; `classify_text_layer` says "bad") keep figures but get no text, tables or equations.
+
+Pages without a usable text layer (scans, text in images, legacy fonts) are OCRed **when a search first shows them**
+(`OCR_HIGHLIGHT`, in the quote's language, cached in the page JSON), so the sentence can be marked there too. That costs
+a few seconds per page the first time.
+
+**Building a result** (`src/layout.py`, model- and PDF-free). The quote is aligned to the page words (`difflib`) to get highlight
+rectangles. Around those lines it looks for a code listing (monospace or C-like lines, indentation rebuilt from x positions),
+a bulleted or numbered list (or an inline "(i) … (ii) … (iii)" enumeration, keeping the book's own markers), and a definition
+sentence ("X is …", "… is called X", "…কে X বলে", "…को X कहते हैं") whose term matches the question; letter-spaced words
+("p ointer") are rejoined and a heading glued to the term is dropped. Figures and tables are ranked: referenced in the passage
+(also on the neighbouring pages) > caption words in the question > near the hit. Uncaptioned wide strips (banners, text
+panels baked into images) are not shown.
+
+**Layout** (`choose_layout`): from the question's intent (diagram / difference / how / what is / program, in English, Bengali
+and Hindi) and what the hits contain: **visual** (figure gallery, the best figure large), **table** (a comparison answered by a
+table), **compare** (best passage from each book side by side; books are told apart by file, since guessed titles collide),
+**steps** (a list or code listing leads) or **answer** (best hit large with its figure or the marked page). `/api/search` is
+unchanged; the website calls `/api/search/rich` and falls back to it on older servers.
+
+Building every page of the 17-book corpus (5,485 pages) takes about 3 minutes with 8 processes and 620 MB of disk. New books
+are analysed while ingesting; `src/build_page_assets.py` does existing books; searches build missing pages on demand.
+
+### 8.11 How many results: a relative score threshold
+
+The website used to show exactly three results, because it sent no `top_k` and the API defaulted to 3: a clear single answer
+came with two weak hits, and a question answered by several books lost the rest. Requests without `top_k` now get every hit
+whose final score is at least `RESULT_RELATIVE_SCORE` × the best hit's, up to `MAX_RESULTS` (an explicit `top_k` behaves as
+before, so API clients see no change).
+
+The rule was chosen on the 109 eval questions (top 10 hits each, 1,090 hits, 145 of them labelled relevant). The best hit is
+always kept:
+
+| Rule | Results per question | Relevant hits kept | Share of shown hits relevant | Questions losing every relevant hit |
+|---|---|---|---|---|
+| Fixed 3 (before) | 3.0 | 129 / 145 | 0.39 | 1 |
+| Fixed 5 | 5.0 | 141 | 0.26 | 0 |
+| Score ≥ 0.1 | 3.9 | 138 | 0.32 | 3 |
+| Score ≥ 0.2 | 3.2 | 131 | 0.37 | 5 |
+| **Score ≥ 0.4 × best** | **3.2** | **140** | **0.41** | **1** |
+| Score ≥ 0.5 × best | 2.9 | 140 | 0.44 | 1 |
+
+A fixed cut-off is the wrong tool: final scores swing a lot between questions (relevant hits: 10th percentile 0.12, median
+0.69), so it drops correct answers to hard questions. Relative to the best hit, the count follows the question: with 0.4,
+35 questions show 1 result, 51 show 2-4 and 23 show 5-10. The "relevant" share is a lower bound, since the labels name one
+expected book and other books often answer too. `tests/eval_search.py --mode full --depth 0` evaluates this mode.
+
+Full pipeline on the eval set, two alternating runs each (identical numbers):
+
+| | hit@1 | hit@3 | MRR | top-1 answer keyword | results / query | seconds / query |
+|---|---|---|---|---|---|---|
+| `top_k=3` (before) | 0.807 | 0.963 | 0.881 | 0.76 | 3.0 | 2.47 |
+| no `top_k`, 0.4 × best | 0.798 | 0.963 | 0.875 | 0.75 | 3.2 | 2.98 |
+
+hit@3 is unchanged; hit@1 differs by one question (noise at this size). QA now reads `MAX_RESULTS + QA_EXTRA_CANDIDATES` = 12
+chunks instead of 5, so a lower-reranked chunk with a strong QA answer can take first place, and each search is about 0.5 s
+slower. Lower `MAX_RESULTS` to trade the longest lists for speed.
+
+### 8.12 Context Explorer: concepts across textbooks
+
+The website's **Explore** tab (`#/explore/<id>`) shows, for one concept, how each book defines it, which concepts the
+books connect it to (a graph; selecting a neighbour shows the sentences that name both, with book and page), its
+figures (captions naming it) and every page it appears on. Search results link to the concepts they name ("Explore
+across books"). Everything is extractive and built offline, without a generative model.
+
+**Building it** (`src/build_concepts.py`, logic in `src/concepts.py`, storage in `src/concept_store.py`, about 4 minutes
+for 15k chunks; run after ingesting or deleting books, or "Rebuild the concept graph" in the admin app):
+
+* **Candidates**: definition sentences ("X is a/the ...", "... is called X", "a process called X", "...কে X বলে",
+  "...को X कहते हैं"), bold short lines from the page-asset cache, and bilingual glosses the books print as
+  "Indic term (English term)" (2,684 in the corpus). Boilerplate sentences repeated across books (licence lines, credits)
+  are dropped first.
+* **Merging**: by spelling (case, plural, hyphens) and through glosses only: "দ্বিপদী নামকরন (binomial nomenclature)"
+  joins the English concept. Embeddings were measured and rejected for this: with BGE-M3, true translations of short
+  terms scored 0.39-0.89 cosine and unrelated terms up to 0.75 ("प्रकाश संश्लेषण" was closer to "আলোর প্রতিফলন" than
+  to its own Bengali form).
+* **Filters**: 1-4 words, no stopwords / pronouns / code fragments / repeated words; a single English word needs two
+  definitions, a definition plus bold, a gloss, or bold in two books (generic words like "safe", "control" were the
+  hubs of most bad links); terms in more than 12% of chunks are dropped.
+* **Links**: two concepts named in at least two prose sentences together (not figure labels, key-term lists or comma
+  lists), scored with NPMI over chunks; the 25 strongest per concept are kept with up to two evidence sentences per book.
+  A relation type comes from the wording between them (is a type of, consists of / is part of, is used for, causes,
+  contrasts with); the order hint counts in how many books one concept first appears before the other.
+
+**Result on the 24-book corpus**: 3,382 concepts (about 1,900 in two or more books), 23,745 links (about 400 typed),
+6,583 figure matches; 36 of 38 hand-picked core concepts present (oxidation and lens missing). A hand check of random
+samples (concepts and links between concepts in 2+ books, 25-30 each, a fresh seed per round) went from 16/30 good links
+to about 16/25 good and 4/25 bad in the last round; concepts were about 13-17 good, 6 bad per 30 (bad ones: generic
+nouns such as "household", headings such as "contributions of greek civilization"). Cross-language links exist only where
+a book prints the English term; "संक्षारण" and "corrosion" stay separate concepts otherwise. Romanized lookups go through
+the transliteration model, which can miss ("protisoron" -> "প্রতিচরণ").
+
+The API caches the concept list for 60 s, so a rebuild shows up within a minute (concept ids change on a rebuild).
+
 ### 8.9 Eval-set growth over the project
 
 Each row is a different question set, so the rows are not directly comparable; they show what each change did on the set that existed at the time.
@@ -667,6 +807,8 @@ drop from 0.90 to 0.50 hit@3 that way).
 | Initialise or upgrade schema | `.venv/bin/python src/db_init.py` (idempotent) |
 | Fill language subfields on old data | `.venv/bin/python src/reindex_es.py` (`--all` re-indexes everything) |
 | Re-apply the exercise heuristic | `.venv/bin/python src/backfill_exercise_flags.py [--dry-run --samples 3]` |
+| Build figures / tables / page images for existing books | `.venv/bin/python src/build_page_assets.py [--only NAME] [--force] [--prune]` |
+| Build the Context Explorer's concept graph | `.venv/bin/python src/build_concepts.py [--dry-run --samples 30]` |
 | Download models | `.venv/bin/python src/download_models.py` |
 | Frontend lint and build | `cd frontend && npm run lint && npm run build` |
 
@@ -686,6 +828,9 @@ three ways to run OSISS (one computer, campus network, public website) are descr
 * `docker-compose.yml` now publishes PostgreSQL (5433) and Elasticsearch (9200) on `127.0.0.1` only. Run
   `docker compose up -d postgres elasticsearch` once to apply it. Nothing in OSISS needs them from another machine.
 * Changing the Elasticsearch mapping or the embedding dimension generally means recreating the index and re-ingesting; chunk-boundary changes only affect books that are re-ingested.
+* Run `src/build_concepts.py` once (after `db_init.py`) to fill the Explore tab; rerun it after adding or deleting books.
+* Run `src/build_page_assets.py` once so results show figures, tables and page images straight away (otherwise each page is
+  built the first time a search shows it). `--prune` removes folders of deleted books.
 
 ---
 
@@ -1249,6 +1394,8 @@ All settings are environment variables, read at import time into the frozen `Set
 | `QA_EXTRA_CANDIDATES` | `2` | Extra chunks sent to QA beyond `top_k` |
 | `QA_RANK_WEIGHT` | `0.3` | Weight $w$ of the QA score in the final score |
 | `MIN_QA_SCORE` | `0.0` | Drop QA results below this score |
+| `RESULT_RELATIVE_SCORE` | `0.4` | Without `top_k`: keep hits scoring at least this share of the best hit's final score |
+| `MAX_RESULTS` | `10` | Without `top_k`: most results returned |
 | `EXCLUDE_EXERCISES` | `true` | Hide exercise / question-bank chunks |
 
 ### Romanized queries
@@ -1276,6 +1423,18 @@ All settings are environment variables, read at import time into the frozen `Set
 | `OCR_DPI` | `300` | Render resolution for full-page OCR |
 | `OCR_LANGUAGES` | `ben+hin+eng` | Tesseract languages used to probe a book's script |
 | `OCR_WORKERS` | `8` | OCR threads (about 4 pages/s with 20) |
+
+### Rich results (figures, tables, page images)
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `PAGE_ASSETS` | `true` | Add figures, tables, equations, blocks and page images to `/api/search/rich` |
+| `ASSET_DIR` | `./data/assets` | Cache of analysed pages, one folder per PDF content hash (a shared mount works for several copies) |
+| `PAGE_ASSETS_AT_INGEST` | `true` | Analyse every page while ingesting (otherwise on first use) |
+| `ASSET_DPI` | `150` | Resolution of figure and table crops (equations use at least 200) |
+| `PAGE_IMAGE_DPI` | `110` | Resolution of page images |
+| `OCR_HIGHLIGHT` | `true` | OCR pages without a usable text layer when a search shows them, to mark the hit |
+| `OCR_HIGHLIGHT_DPI` | `200` | Render resolution for that OCR |
 
 ### Infrastructure and models
 
@@ -1356,7 +1515,7 @@ which wins over the environment. `MODEL_PRECISION` and `SEARCH_CONCURRENCY` need
 
 ```
 src/
-  api_server.py            FastAPI app: /health, /api/search, /data PDFs, search access + CORS
+  api_server.py            FastAPI app: /health, /api/search(/rich), /data PDFs and page assets, search access + CORS
   admin_api.py             /api/admin/* routes (token auth, lockout, IP allowlist)
   admin.py                 book metadata, delete/restore, API keys (PostgreSQL + Elasticsearch)
   ingest_worker.py         in-process ingestion worker: jobs, polling, maintenance scripts, log
@@ -1369,6 +1528,11 @@ src/
   sync_models.py           copies models/ to or from S3
   search.py                search pipeline: retrieve, fuse, rerank, diversify, QA, quote extraction
   ranking.py               model-free helpers: query cleanup, RRF, MMR, dedupe, QA windows
+  page_assets.py           per-page figures, tables, equations, text positions and page images (cached by file hash)
+  layout.py                rich results: highlights, definition/list/code blocks, figure ranking, layout choice
+  concepts.py              Context Explorer graph: candidate terms, gloss merging, mentions, links, relations
+  concept_store.py         concept graph storage (PostgreSQL) and lookups; concept_api.py serves /api/concepts
+  build_concepts.py        rebuilds the concept graph from the ingested books
   translit.py              romanized-query detection and IndicXlit transliteration
   ingest.py                ingestion pipeline (watcher or --once, --only)
   utils.py                 PDF extraction, OCR fallback, chunking, language and exercise heuristics
@@ -1379,9 +1543,15 @@ src/
   build_english_vocab.py   builds models/english_vocab.txt
   reindex_es.py            fills language subfields on existing documents
   backfill_exercise_flags.py  re-applies the exercise heuristic in place
+  build_page_assets.py     builds page assets for already ingested books (--only, --force, --prune)
   wait_for_services.py     waits for Postgres and Elasticsearch
 frontend/                  React + TypeScript + Tailwind UI
-  src/components/ResultCard.tsx   result card with highlighted paragraph
+  src/components/layouts/ResultsView.tsx   arranges hits by the suggested layout (answer, visual, table, compare, steps)
+  src/components/ResultCard.tsx   result card: lead block, highlighted paragraph, figures, tables, equations, page
+  src/components/blocks/          definition / list / code views, figure / table / equation / page views
+  src/components/Lightbox.tsx     full-screen figure and page viewer
+  src/pages/                      SearchPage and ExplorerPage (hash routes #/ and #/explore/<id>)
+  src/components/explorer/        concept view and graph (dependency-free force layout in src/lib/forceLayout.ts)
   src/lib/searchApi.ts            API client and response normalisation
   src/lib/textFormat.ts           display cleanup and quote/answer highlighting
 admin/                     Electron admin app (React + TypeScript + Tailwind)
@@ -1400,6 +1570,7 @@ docs/
   images/                  the graphs
   images/admin/            admin app screenshots used in section 11
 data/pdfs/                 source PDFs (git-ignored)
+data/assets/               analysed pages: crops, page images, JSON (git-ignored)
 models/                    local model cache (git-ignored)
 docker-compose.yml         Postgres + Elasticsearch (published on 127.0.0.1 only)
 Dockerfile                 API image (website built in, Tesseract with ben/hin, /ready health check)

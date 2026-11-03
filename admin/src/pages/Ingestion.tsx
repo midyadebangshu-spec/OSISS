@@ -12,6 +12,8 @@ const MAINTENANCE = [
   { task: 'db-init', label: 'Update database schema', help: 'db_init.py: create missing tables, columns and index mappings.', icon: Database },
   { task: 'reindex', label: 'Re-index language fields', help: 'reindex_es.py: fill text.bn/hi/en for documents that lack them.', icon: ListRestart },
   { task: 'backfill-exercises', label: 'Re-apply exercise flags', help: 'backfill_exercise_flags.py: after changing the exercise heuristic.', icon: Wrench },
+  { task: 'page-assets', label: 'Build page figures and images', help: 'build_page_assets.py: figures, tables and page images for books ingested earlier.', icon: Wrench },
+  { task: 'concepts', label: 'Rebuild the concept graph', help: 'build_concepts.py: the Context Explorer, after adding or deleting books.', icon: Wrench },
 ]
 
 function LiveLog() {

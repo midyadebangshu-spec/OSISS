@@ -93,7 +93,12 @@ def evaluate(questions: List[Dict], mode: str, depth: int) -> Dict:
     per_lang: Dict[str, List[int]] = {}
     seconds: Dict[str, List[float]] = {}
     failures = []
-    cutoff = min(10, depth)
+    shown = 0
+    from config import settings
+
+    # depth 0: no top_k, as the website searches (relative score threshold, up to MAX_RESULTS).
+    top_k = depth if depth > 0 else None
+    cutoff = min(10, depth if depth > 0 else settings.max_results)
 
     for q in questions:
         started = time.perf_counter()
@@ -106,7 +111,7 @@ def evaluate(questions: List[Dict], mode: str, depth: int) -> Dict:
             texts = [c["source"].get("text", "") for c in chunks]
             chunk_texts = texts
         else:
-            result = search_and_extract(q["query"], top_k=depth)
+            result = search_and_extract(q["query"], top_k=top_k)
             ranked = [
                 (r["source"].get("file_path", ""), int(r["source"].get("page_number") or 0)) for r in result["results"]
             ]
@@ -114,6 +119,7 @@ def evaluate(questions: List[Dict], mode: str, depth: int) -> Dict:
             chunk_texts = [r["chunk_preview"] for r in result["results"]]
 
         seconds.setdefault(q.get("group", q["lang"]), []).append(time.perf_counter() - started)
+        shown += len(ranked)
         exercise_results += sum(is_exercise_chunk(t) for t in chunk_texts[:3])
         total_results += len(chunk_texts[:3])
         rank = next((i for i, (f, p) in enumerate(ranked, 1) if is_match(q, f, p)), None)
@@ -141,6 +147,7 @@ def evaluate(questions: List[Dict], mode: str, depth: int) -> Dict:
         "per_lang": {lang: (sum(v) / len(v), len(v)) for lang, v in sorted(per_lang.items())},
         "seconds": {lang: sum(v) / len(v) for lang, v in sorted(seconds.items())},
         "failures": failures,
+        "avg_results": shown / n,
     }
 
 
@@ -149,6 +156,7 @@ def print_report(metrics: Dict) -> None:
     for k, value in metrics["hit"].items():
         print(f"  hit@{k}: {value:.2f}")
     print(f"  MRR:   {metrics['mrr']:.3f}")
+    print(f"  results per query: {metrics['avg_results']:.1f}")
     print(f"  nDCG@{metrics['ndcg_cutoff']}: {metrics['ndcg']:.3f}")
     exercise, total = metrics["exercise"]
     print(f"  exercise chunks in top 3: {exercise}/{total} ({exercise / max(1, total):.1%})")
@@ -255,7 +263,9 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="OSISS search evaluation")
     parser.add_argument("--validate", action="store_true")
     parser.add_argument("--mode", choices=["retrieval", "full"], default="retrieval")
-    parser.add_argument("--depth", type=int, default=10, help="results considered per query")
+    parser.add_argument(
+        "--depth", type=int, default=10, help="results per query; 0 = no top_k (relative score threshold, as the website)"
+    )
     parser.add_argument("--compare", action="store_true", help="table of each search feature on/off")
     parser.add_argument("--set", action="append", default=[], metavar="KEY=VALUE",
                         help="override a setting, e.g. --set mmr_lambda=0.8 (repeatable)")

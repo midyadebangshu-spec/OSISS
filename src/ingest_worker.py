@@ -33,6 +33,8 @@ MAINTENANCE = {
     "db-init": ("db_init.py", []),
     "reindex": ("reindex_es.py", []),
     "backfill-exercises": ("backfill_exercise_flags.py", []),
+    "page-assets": ("build_page_assets.py", []),
+    "concepts": ("build_concepts.py", []),
 }
 
 

@@ -91,6 +91,10 @@ class Settings:
     mmr_lambda: float = float(os.getenv("MMR_LAMBDA", "0.85"))
     # Extra reranked chunks sent to QA beyond top_k, so a strong QA answer can still make the cut.
     qa_extra_candidates: int = int(os.getenv("QA_EXTRA_CANDIDATES", "2"))
+    # Requests without top_k (the website) get every hit scoring at least this fraction of the best hit's final score,
+    # up to MAX_RESULTS. 0.4 keeps 140/145 labelled relevant hits in the top 10 at 3.2 results on average (README 8.11).
+    result_relative_score: float = float(os.getenv("RESULT_RELATIVE_SCORE", "0.4"))
+    max_results: int = int(os.getenv("MAX_RESULTS", "10"))
 
     embedding_dim: int = int(os.getenv("EMBEDDING_DIM", "1024"))
     inference_device: str = os.getenv("INFERENCE_DEVICE", "auto").lower()
@@ -158,6 +162,18 @@ class Settings:
     # S3 PDFs: "redirect" to a short-lived signed URL (default) or "proxy" (stream through the API).
     pdf_serve_mode: str = os.getenv("PDF_SERVE_MODE", "redirect").lower()
     s3_url_expiry_seconds: int = int(os.getenv("S3_URL_EXPIRY_SECONDS", "900"))
+
+    # Rich results (figures, tables, formulas, page images) for the search UI; see src/page_assets.py.
+    page_assets: bool = os.getenv("PAGE_ASSETS", "true").lower() in {"1", "true", "yes"}
+    # Cache of extracted page content, one folder per PDF content hash. May be a shared mount for several copies.
+    asset_dir: str = os.getenv("ASSET_DIR", "./data/assets")
+    # Analyse every page while ingesting (otherwise pages are analysed the first time a search needs them).
+    page_assets_at_ingest: bool = os.getenv("PAGE_ASSETS_AT_INGEST", "true").lower() in {"1", "true", "yes"}
+    asset_dpi: int = int(os.getenv("ASSET_DPI", "150"))
+    page_image_dpi: int = int(os.getenv("PAGE_IMAGE_DPI", "110"))
+    # Pages without a usable text layer are OCRed (once, then cached) when a search shows them, to highlight the hit.
+    ocr_highlight: bool = os.getenv("OCR_HIGHLIGHT", "true").lower() in {"1", "true", "yes"}
+    ocr_highlight_dpi: int = int(os.getenv("OCR_HIGHLIGHT_DPI", "200"))
 
 
 settings = Settings()

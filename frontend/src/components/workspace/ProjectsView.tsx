@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import type { FormEvent } from 'react'
-import { ArrowLeft, BookPlus, FolderKanban, Pencil, Plus, Search, Trash2, X } from 'lucide-react'
+import { ArrowLeft, BookPlus, FolderKanban, Network, Pencil, Plus, Search, Trash2, X } from 'lucide-react'
 import { ResultSkeleton } from '../ResultSkeleton'
 import { ResultsView } from '../layouts/ResultsView'
 import { listBooks } from '../../lib/libraryApi'
@@ -156,6 +156,7 @@ function ProjectDetailView({ id }: { id: number }) {
                     </>
                 )}
                 <div className="flex gap-4 text-sm">
+                    <a href={workspaceHref('board', id)} className="inline-flex items-center gap-1 font-medium underline-offset-4 hover:underline"><Network className="h-4 w-4" /> Research board</a>
                     <button type="button" onClick={() => setEditing((on) => !on)} className="inline-flex items-center gap-1 underline-offset-4 hover:underline"><Pencil className="h-4 w-4" /> Edit</button>
                     <button type="button" onClick={() => void remove()} className="inline-flex items-center gap-1 text-red-700 underline-offset-4 hover:underline"><Trash2 className="h-4 w-4" /> Delete project</button>
                 </div>

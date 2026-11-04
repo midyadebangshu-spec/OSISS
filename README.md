@@ -258,6 +258,7 @@ Every step names the setting that controls it (see [section 12](#12-configuratio
 | `GET /data/pdfs/<file>.pdf` | PDFs from `PDF_DIR` only (opened by the page viewer at `#page=N`) |
 | `GET /ready` | load-balancer health check: 200 when this copy can answer searches, else 503 with the failing check |
 | `/api/auth/*`, `/api/workspace/*` | scholar accounts and their private workspace: saved items, collections, notes, projects, highlights (cookie session; see [section 11.6.9](#1169-scholar-accounts-and-passwords)) |
+| `/api/workspace/projects/<id>/board*`, `/cards*`, `/study/*`, `/saved-searches*`, `/notifications*` | research board, flashcards (SM-2), saved-search alerts (see [11.6.9](#1169-scholar-accounts-and-passwords)) |
 | `/api/workspace/drafts*`, `/api/workspace/references` | writing studio (drafts, quote check, Word / LaTeX / Markdown export) and formatted references with BibTeX / RIS (see [11.6.9](#1169-scholar-accounts-and-passwords)) |
 | `GET /api/library/<id>/page/<n>`, `/find-page?label=` | the reader's page (image, word boxes, printed page number) and a printed-page lookup |
 | `/api/admin/*` | admin API for the desktop admin app, behind `ADMIN_TOKEN` (see [section 11](#11-using-the-admin-app-step-by-step)) |
@@ -1269,6 +1270,26 @@ marked `Secure`.
   only: no chapters, editors or translators. For several authors put `;` between names in the book's **Author** field in the
   admin app; an organisation (NCERT, OpenStax, …) and Bengali / Hindi names are never inverted or abbreviated.
 
+##### Research board, flashcards and saved-search alerts
+
+* **Research board** (a project's **Research board** link): a free canvas of *claims* you write, saved *evidence*, *notes* and
+  *concepts*. Drag nodes, pan and zoom, and join them with typed links (supports, contradicts, explains, relates): choose a link
+  type, click the node it starts from, then the node it points to. **Concepts → Add with neighbours** puts a concept and the
+  concepts the textbooks most often teach with it on the board, joined as the concept graph relates them. A claim with no
+  supporting evidence is outlined in amber and counted. **Make a draft** creates a writing-studio draft from the board: each
+  claim a heading, its supporting evidence as cited block quotations, counter-evidence and your explaining notes beneath, and any
+  claim without evidence marked `TODO`. The board never writes text of its own.
+* **Study** (Workspace → Study): flashcards with spaced repetition (SM-2: again / hard / good / easy give the next interval; a
+  new card comes back after 1 day, then 6, then longer). The back of a card is always the saved item's quote with its book and page.
+  A saved definition makes a card automatically ("What is meant by “stack”?", from the term saved with it); for any other saved
+  item use **Flashcard** on it and write the question. **Make cards from definitions** does a whole collection or project at once.
+  Review with the keyboard: space shows the answer, 1 to 4 grade it. Cards can be paused, edited and deleted. "Due" is by the
+  server's calendar date.
+* **Saved searches**: after a search choose "Tell me when a new book answers this". When the library has changed (a book added or
+  re-ingested), the scholar's dashboard re-runs those searches (a few per visit, through the normal search queue, nothing in the
+  background) and shows a notice for each book that now answers a search and did not before. Notices are in-app only (no email);
+  a scholar keeps at most 20 saved searches. Everything here is included in **Download everything (JSON)**.
+
 ### 11.7 How the app and the server are protected
 
 * **The app on a computer** is protected by the passkey. Saved servers and their admin tokens are encrypted with AES-256-GCM under
@@ -1746,11 +1767,11 @@ Running the evaluation while the API server is up can run out of GPU memory on a
    assignments, flashcards from the books' definitions with spaced repetition, saved searches that alert when a new book
    answers them, shared projects later.
    Decided: users are scholars, accounts live on the server (PostgreSQL), registration is open, passwords are reset by the
-   admin (no email), sharing projects comes later. **Phases 1 to 3 are built**: accounts, evidence items, collections,
+   admin (no email), sharing projects comes later. **Phases 1 to 4A/4B are built**: accounts, evidence items, collections,
    notes, dashboard, JSON export, the admin app's Scholars page; projects with scoped search, the reader with highlights
    and reading progress, publisher / edition / ISBN and printed page numbers; references (APA, MLA, Chicago, IEEE, BibTeX,
-   RIS) and the writing studio with quote checking and Word / LaTeX / Markdown / PDF export. Not built yet: the research
-   board, sharing; deferred extras: chapters / editors / translators, Harvard and Vancouver, bilingual glossary.
+   RIS) and the writing studio with quote checking and Word / LaTeX / Markdown / PDF export; the research board, flashcards
+   with spaced repetition and saved-search alerts. Not built yet: sharing projects and teacher reading lists; deferred extras: chapters / editors / translators, Harvard and Vancouver, bilingual glossary.
    Phases: (1) accounts in PostgreSQL (managed from the admin app) + evidence items + collections + notes + dashboard;
    (2) projects with scoped search, the reader with highlights, metadata and printed pages; (3) references and the
    writing studio; (4) research board, collaboration, study tools.

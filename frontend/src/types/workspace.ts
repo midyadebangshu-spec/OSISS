@@ -60,6 +60,9 @@ export type Dashboard = {
     recent_searches: { query: string; at: string }[]
     continue_reading: { book_id: number; title: string; author: string | null; department: string | null; at: string; page_number: number | null }[]
     projects: Project[]
+    study: StudyStats
+    saved_searches: SavedSearch[]
+    unread_notifications: AppNotification[]
     recent_evidence: Evidence[]
     collections: Collection[]
     recent_notes: Note[]
@@ -131,3 +134,57 @@ export type DraftCheck = { quotes: QuoteCheck[]; counts: Record<string, number>;
 export type ReferenceEntry = { book_id: number; plain: string; marked: string; html: string; warnings: string[] }
 
 export type References = { style: CitationStyle; styles: Record<CitationStyle, string>; entries: ReferenceEntry[] }
+
+// --- research board -------------------------------------------------------------------------------------------
+
+export type BoardRelation = 'supports' | 'contradicts' | 'explains' | 'relates'
+export type BoardKind = 'claim' | 'evidence' | 'concept' | 'note'
+
+export type BoardNode = {
+    id: number
+    kind: BoardKind
+    text: string
+    x: number
+    y: number
+    evidence?: { id: number; quote: string; book_id: number | null; book_title: string | null; book_author: string | null; page_number: number | null; printed_page?: string | null; kind: string }
+    note?: { id: number; title: string; body: string }
+    concept_key?: string
+}
+
+export type BoardEdge = { id: number; source_id: number; target_id: number; relation: BoardRelation; note: string }
+
+export type Board = { project_id: number; nodes: BoardNode[]; edges: BoardEdge[]; unsupported: number[] }
+
+// --- study ----------------------------------------------------------------------------------------------------
+
+export type CardGrade = 0 | 1 | 2 | 3
+
+export type Card = {
+    id: number
+    front: string
+    project_id: number | null
+    ease: number
+    interval_days: number
+    reps: number
+    lapses: number
+    due: string
+    suspended: boolean
+    is_new: boolean
+    last_reviewed: string | null
+    next_intervals: { again: number; hard: number; good: number; easy: number }
+    evidence: { id: number; kind: string; book_id: number | null; book_title: string | null; book_author: string | null; page_number: number | null; printed_page?: string | null; quote: string }
+}
+
+export type StudyStats = {
+    total: number
+    due: number
+    new: number
+    mature: number
+    reviewed_today: number
+    reviews_30_days: number
+    retention_30_days: number | null
+}
+
+export type SavedSearch = { id: number; query: string; project_id: number | null; last_checked_at: string | null; created_at: string | null }
+
+export type AppNotification = { id: number; kind: string; message: string; data: { query?: string; book_id?: number; page_number?: number }; read: boolean; created_at: string }

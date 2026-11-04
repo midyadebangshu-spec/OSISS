@@ -1,9 +1,9 @@
 import { useEffect, useState } from 'react'
-import { BookOpen, Clock, FolderKanban, FolderOpen, NotebookPen, Search } from 'lucide-react'
-import { getDashboard } from '../../lib/workspaceApi'
+import { Bell, BookOpen, Clock, FolderKanban, FolderOpen, Layers, NotebookPen, Search, X } from 'lucide-react'
+import { checkSavedSearches, deleteSavedSearch, getDashboard, markNotificationsRead } from '../../lib/workspaceApi'
 import { readerHref, workspaceHref } from '../../lib/route'
 import { libraryHref } from '../../lib/route'
-import type { Dashboard } from '../../types/workspace'
+import type { AppNotification, Dashboard } from '../../types/workspace'
 import { EvidenceCard } from './EvidenceCard'
 
 function Panel({ title, icon, children }: { title: string; icon: React.ReactNode; children: React.ReactNode }) {
@@ -20,11 +20,25 @@ const EMPTY = <p className="text-sm text-zinc-500">Nothing yet.</p>
 export function DashboardView() {
     const [data, setData] = useState<Dashboard | null>(null)
     const [error, setError] = useState<string | null>(null)
+    const [alerts, setAlerts] = useState<AppNotification[]>([])
+    const [savedSearches, setSavedSearches] = useState<Dashboard['saved_searches']>([])
 
     useEffect(() => {
         const controller = new AbortController()
         getDashboard(controller.signal)
-            .then(setData)
+            .then((result) => {
+                setData(result)
+                setAlerts(result.unread_notifications)
+                setSavedSearches(result.saved_searches)
+                // Re-run saved searches the library has changed under; new notifications appear without a reload.
+                if (result.saved_searches.length > 0) {
+                    checkSavedSearches()
+                        .then((checked) => {
+                            if (!controller.signal.aborted) setAlerts(checked.notifications)
+                        })
+                        .catch(() => undefined)
+                }
+            })
             .catch((failure: unknown) => {
                 if (!controller.signal.aborted) setError(failure instanceof Error ? failure.message : 'Could not load the dashboard.')
             })
@@ -34,8 +48,27 @@ export function DashboardView() {
     if (error) return <p role="alert" className="border-2 border-zinc-950 p-4 text-sm">{error}</p>
     if (!data) return <p className="text-sm text-zinc-500">Loading…</p>
 
+    const dismiss = (id?: number) => {
+        setAlerts((all) => (id ? all.filter((item) => item.id !== id) : []))
+        markNotificationsRead(id).catch(() => undefined)
+    }
+
     return (
         <div className="space-y-4">
+            {alerts.length > 0 && (
+                <section aria-label="Alerts" className="space-y-2 border-2 border-sky-700 bg-sky-50 p-3 text-sm">
+                    <p className="flex items-center justify-between font-semibold"><span className="inline-flex items-center gap-2"><Bell className="h-4 w-4" /> {alerts.length} new {alerts.length === 1 ? 'answer' : 'answers'} to your saved searches</span>
+                        <button type="button" onClick={() => dismiss()} className="text-xs font-normal underline-offset-4 hover:underline">Dismiss all</button></p>
+                    <ul className="space-y-1">
+                        {alerts.map((item) => (
+                            <li key={item.id} className="flex items-start justify-between gap-2">
+                                <span>{item.data.book_id ? <a href={item.data.page_number ? readerHref(item.data.book_id, item.data.page_number) : libraryHref(item.data.book_id)} onClick={() => dismiss(item.id)} className="underline underline-offset-4">{item.message}</a> : item.message}</span>
+                                <button type="button" aria-label="Dismiss" onClick={() => dismiss(item.id)}><X className="h-4 w-4" /></button>
+                            </li>
+                        ))}
+                    </ul>
+                </section>
+            )}
             <p className="text-sm text-zinc-600">
                 {data.counts.evidence} saved · {data.counts.collections} collections · {data.counts.notes} notes
                 {data.new_books_30_days > 0 && <> · <a href={libraryHref()} className="underline underline-offset-4">{data.new_books_30_days} new {data.new_books_30_days === 1 ? 'book' : 'books'} this month</a></>}
@@ -58,6 +91,26 @@ export function DashboardView() {
                         <ul className="space-y-1 text-sm">
                             {data.recent_searches.map((search) => (
                                 <li key={search.query} className="flex items-center gap-2"><Clock className="h-3.5 w-3.5 shrink-0 text-zinc-400" /><span className="truncate">{search.query}</span></li>
+                            ))}
+                        </ul>
+                    )}
+                </Panel>
+                <Panel title="Study" icon={<Layers className="h-4 w-4" />}>
+                    {data.study.total === 0 ? <p className="text-sm text-zinc-500">No flashcards yet. Use “Flashcard” on a saved definition.</p> : (
+                        <p className="text-sm">
+                            <a href={workspaceHref('study')} className="font-medium underline-offset-4 hover:underline">{data.study.due} {data.study.due === 1 ? 'card' : 'cards'} due</a>
+                            <span className="text-zinc-600"> · {data.study.total} in all · {data.study.reviewed_today} reviewed today</span>
+                        </p>
+                    )}
+                </Panel>
+                <Panel title="Saved searches" icon={<Bell className="h-4 w-4" />}>
+                    {savedSearches.length === 0 ? <p className="text-sm text-zinc-500">None. After a search, choose “Tell me when a new book answers this”.</p> : (
+                        <ul className="space-y-1 text-sm">
+                            {savedSearches.map((search) => (
+                                <li key={search.id} className="flex items-center justify-between gap-2">
+                                    <span className="truncate">{search.query}</span>
+                                    <button type="button" aria-label={`Stop watching “${search.query}”`} onClick={() => { setSavedSearches((all) => all.filter((item) => item.id !== search.id)); deleteSavedSearch(search.id).catch(() => undefined) }}><X className="h-4 w-4" /></button>
+                                </li>
                             ))}
                         </ul>
                     )}

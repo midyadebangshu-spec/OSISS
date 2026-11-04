@@ -584,7 +584,354 @@ def test_references_listing_and_files(app, clean):
     assert other.get(f"/api/workspace/references?project_id={pid}").status_code == 404
 
 
-def test_export_includes_drafts(app):
+def test_export_includes_drafts_boards_cards_and_saved_searches(app):
     client = scholar(app)
     client.post("/api/workspace/drafts", json={"title": "D", "body": "text"})
-    assert client.get("/api/workspace/export").json()["drafts"][0]["body"] == "text"
+    pid = _project(client)
+    claim = client.post(f"/api/workspace/projects/{pid}/board/nodes", json={"kind": "claim", "text": "c"}).json()
+    client.post(f"/api/workspace/projects/{pid}/board/edges", json={"source_id": claim["id"], "target_id": claim["id"] + 0, "relation": "relates"})
+    definition = client.post("/api/workspace/evidence", json={"kind": "definition", "book_id": 1, "page_number": 2, "quote": "A stack is a list.", "meta": {"term": "stack"}}).json()
+    client.post("/api/workspace/cards", json={"evidence_id": definition["id"]})
+    client.post("/api/workspace/saved-searches", json={"query": "stack"})
+    export = client.get("/api/workspace/export").json()
+    assert export["drafts"][0]["body"] == "text"
+    assert export["projects"][0]["board"]["nodes"][0]["text"] == "c" and export["projects"][0]["board"]["edges"] == []
+    assert export["cards"][0]["front"] == "What is meant by “stack”?" and export["saved_searches"][0]["query"] == "stack"
+
+
+# --- research board ---------------------------------------------------------------------------------------------------------
+
+
+def _project(client, title="Board project"):
+    return client.post("/api/workspace/projects", json={"title": title}).json()["id"]
+
+
+def test_board_nodes_edges_and_outline(app, monkeypatch):
+    client = scholar(app)
+    pid = _project(client)
+    item = _saved(client)
+    base = f"/api/workspace/projects/{pid}/board"
+    assert client.get(base).json() == {"project_id": pid, "nodes": [], "edges": [], "unsupported": []}
+
+    claim = client.post(f"{base}/nodes", json={"kind": "claim", "text": "  Stacks are   LIFO  "}).json()
+    assert claim["text"] == "Stacks are LIFO" and (claim["x"], claim["y"]) == (0, 0)
+    second = client.post(f"{base}/nodes", json={"kind": "claim", "text": "Second", "x": 100, "y": 50}).json()
+    assert (second["x"], second["y"]) == (100, 50)
+    ev = client.post(f"{base}/nodes", json={"kind": "evidence", "evidence_id": item["id"]}).json()
+    assert ev["evidence"]["quote"] == QUOTE and ev["evidence"]["book_title"] == "Data Structures" and (ev["x"], ev["y"]) == (520.0, 0.0)
+    assert client.post(f"{base}/nodes", json={"kind": "evidence", "evidence_id": item["id"]}).status_code == 409  # once per board
+
+    note = client.post("/api/workspace/notes", json={"title": "N", "body": "Mine", "project_id": pid}).json()
+    note_node = client.post(f"{base}/nodes", json={"kind": "note", "note_id": note["id"]}).json()
+    assert note_node["note"]["body"] == "Mine"
+    concept = client.post(f"{base}/nodes", json={"kind": "concept", "concept_key": "stack"}).json()
+    assert concept["concept_key"] == "stack" and client.post(f"{base}/nodes", json={"kind": "concept", "concept_key": "stack"}).status_code == 409
+
+    for bad in ({"kind": "claim"}, {"kind": "claim", "text": "x", "x": 99999, "y": 0}, {"kind": "banana"},
+                {"kind": "evidence"}, {"kind": "note"}, {"kind": "concept"}, {"kind": "evidence", "evidence_id": 9999}):
+        assert client.post(f"{base}/nodes", json=bad).status_code in (400, 404, 422), bad
+
+    edge = client.post(f"{base}/edges", json={"source_id": ev["id"], "target_id": claim["id"], "relation": "supports"}).json()
+    again = client.post(f"{base}/edges", json={"source_id": ev["id"], "target_id": claim["id"], "relation": "supports", "note": "page 12"}).json()
+    assert again["id"] == edge["id"] and again["note"] == "page 12"  # idempotent, the comment updates
+    assert client.post(f"{base}/edges", json={"source_id": ev["id"], "target_id": ev["id"], "relation": "supports"}).status_code == 400
+    assert client.post(f"{base}/edges", json={"source_id": ev["id"], "target_id": claim["id"], "relation": "likes"}).status_code == 400
+    assert client.post(f"{base}/edges", json={"source_id": ev["id"], "target_id": 99999, "relation": "supports"}).status_code == 404
+
+    board = client.get(base).json()
+    assert [n["id"] for n in board["nodes"]] == [claim["id"], second["id"], ev["id"], note_node["id"], concept["id"]]
+    assert board["unsupported"] == [second["id"]]  # the first claim has evidence, the second has none
+
+    moved = client.patch(f"{base}/nodes/{claim['id']}", json={"x": 10.5, "y": -20, "text": "Edited claim"}).json()
+    assert (moved["x"], moved["y"], moved["text"]) == (10.5, -20, "Edited claim")
+    assert client.patch(f"{base}/nodes/{ev['id']}", json={"text": "nope"}).status_code == 400  # only claims have text
+    assert client.patch(f"{base}/nodes/{claim['id']}", json={"text": " "}).status_code == 400
+    assert client.patch(f"{base}/nodes/99999", json={"x": 1}).status_code == 404
+
+    outline = client.post(f"{base}/outline").json()
+    assert outline["title"] == "Outline: Board project" and outline["project_id"] == pid
+    assert f"## Edited claim\n\n> {QUOTE} [@e{item['id']}]" in outline["body"] and "TODO: add supporting evidence." in outline["body"]
+    check = client.post(f"/api/workspace/drafts/{outline['id']}/check").json()  # the outline is checkable like any draft
+    assert check["quotes"][0]["evidence_id"] == item["id"]
+
+    assert client.delete(f"{base}/edges/{edge['id']}").status_code == 200
+    assert client.delete(f"{base}/edges/{edge['id']}").status_code == 404
+    assert client.delete(f"{base}/nodes/{second['id']}").status_code == 200
+    client.delete(f"/api/workspace/evidence/{item['id']}")  # deleting the saved item removes its node too
+    assert ev["id"] not in [n["id"] for n in client.get(base).json()["nodes"]]
+    assert client.post(f"/api/workspace/projects/999/board/outline").status_code == 404
+    assert client.delete(f"/api/workspace/projects/{pid}").status_code == 200
+    assert client.get(base).status_code == 404
+
+    monkeypatch.setattr("board.MAX_NODES", 2)
+    pid2 = _project(client, "Small")
+    for index in range(2):
+        client.post(f"/api/workspace/projects/{pid2}/board/nodes", json={"kind": "claim", "text": f"c{index}"})
+    assert client.post(f"/api/workspace/projects/{pid2}/board/nodes", json={"kind": "claim", "text": "one too many"}).status_code == 409
+
+
+def test_boards_are_private(app):
+    ada, bob = scholar(app), scholar(app, "bob@example.edu")
+    pid = _project(ada)
+    base = f"/api/workspace/projects/{pid}/board"
+    node = ada.post(f"{base}/nodes", json={"kind": "claim", "text": "Mine"}).json()
+    other = ada.post(f"{base}/nodes", json={"kind": "claim", "text": "Mine too"}).json()
+    edge = ada.post(f"{base}/edges", json={"source_id": node["id"], "target_id": other["id"], "relation": "relates"}).json()
+    for call in (bob.get(base), bob.post(f"{base}/nodes", json={"kind": "claim", "text": "x"}),
+                 bob.patch(f"{base}/nodes/{node['id']}", json={"x": 1}), bob.delete(f"{base}/nodes/{node['id']}"),
+                 bob.post(f"{base}/edges", json={"source_id": node["id"], "target_id": other["id"], "relation": "supports"}),
+                 bob.delete(f"{base}/edges/{edge['id']}"), bob.post(f"{base}/outline"), bob.post(f"{base}/seed", json={"concept_id": 1})):
+        assert call.status_code == 404
+    mine = _project(bob, "Bob's")  # his own board cannot use her nodes or her evidence
+    item = _saved(ada)
+    assert bob.post(f"/api/workspace/projects/{mine}/board/nodes", json={"kind": "evidence", "evidence_id": item["id"]}).status_code == 404
+    assert bob.post(f"/api/workspace/projects/{mine}/board/edges", json={"source_id": node["id"], "target_id": other["id"], "relation": "relates"}).status_code == 404
+    assert [n["text"] for n in ada.get(base).json()["nodes"]] == ["Mine", "Mine too"]
+
+
+def test_board_seeding_from_the_concept_graph(app, clean):
+    with clean, clean.cursor() as cursor:
+        cursor.execute("TRUNCATE concept_links, concept_mentions, concept_figures, concepts RESTART IDENTITY CASCADE")
+        cursor.execute("INSERT INTO concepts (key, label) VALUES ('stack', 'stack'), ('lifo', 'LIFO'), ('queue', 'queue'), ('heap', 'heap')")
+        cursor.execute(
+            "INSERT INTO concept_links (source_id, target_id, weight, npmi, sentence_count, chunk_count, book_count, relation) VALUES "
+            "(1, 2, 0.9, 0.5, 3, 3, 2, 'is_a'), (3, 1, 0.8, 0.5, 3, 3, 2, 'contrast'), (1, 4, 0.1, 0.1, 1, 1, 1, NULL)"
+        )
+    client = scholar(app)
+    pid = _project(client)
+    base = f"/api/workspace/projects/{pid}/board"
+    result = client.post(f"{base}/seed", json={"concept_id": 1}).json()
+    assert result["neighbours"] == 3
+    labels = sorted(n["concept_key"] for n in result["nodes"])
+    assert labels == ["LIFO", "heap", "queue", "stack"]
+    notes = {(e["source_id"], e["target_id"]): e["note"] for e in result["edges"]}
+    by_label = {n["concept_key"]: n["id"] for n in result["nodes"]}
+    assert notes[(by_label["stack"], by_label["LIFO"])] == "is a type of"  # direction follows the concept graph
+    assert notes[(by_label["queue"], by_label["stack"])] == "contrasts with"
+    assert notes[(by_label["stack"], by_label["heap"])] == "appears with"
+    positions = {n["concept_key"]: (n["x"], n["y"]) for n in result["nodes"]}
+    assert positions["stack"] == (100.0, 350.0)  # the seeded concept in the middle of a ring
+    assert len({positions[label] for label in positions}) == 4 and all(abs(positions[l][0] - 100) <= 330 for l in positions)
+    again = client.post(f"{base}/seed", json={"concept_id": 1}).json()  # reuses what is there
+    assert len(again["nodes"]) == 4 and len(again["edges"]) == 3
+    assert client.post(f"{base}/seed", json={"concept_id": 999}).status_code == 404
+
+
+# --- study: flashcards and spaced repetition -----------------------------------------------------------------------------------
+
+
+def _definition(client, term="stack", quote="A stack is a list in which insertions and deletions happen at one end.", **extra):
+    return client.post("/api/workspace/evidence", json={"kind": "definition", "book_id": 1, "page_number": 12, "quote": quote, "meta": {"term": term}, **extra}).json()
+
+
+def test_cards_fronts_and_the_review_cycle(app, clean):
+    client = scholar(app)
+    definition = _definition(client)
+    passage = _saved(client)
+    concept = client.post("/api/workspace/evidence", json={"kind": "concept", "concept_key": "stack"}).json()
+
+    card = client.post("/api/workspace/cards", json={"evidence_id": definition["id"]}).json()
+    assert card["front"] == "What is meant by “stack”?" and card["is_new"] and card["evidence"]["quote"].startswith("A stack is a list")
+    assert card["evidence"]["book_title"] == "Data Structures" and card["due"] and card["next_intervals"] == {"again": 1, "hard": 1, "good": 1, "easy": 1}
+    assert client.post("/api/workspace/cards", json={"evidence_id": definition["id"]}).json()["id"] == card["id"]  # same front: same card
+    assert client.post("/api/workspace/cards", json={"evidence_id": passage["id"]}).status_code == 400  # needs a hand-written front
+    written = client.post("/api/workspace/cards", json={"evidence_id": passage["id"], "front": "  What does a stack follow? "}).json()
+    assert written["front"] == "What does a stack follow?"
+    assert client.post("/api/workspace/cards", json={"evidence_id": concept["id"], "front": "x"}).status_code == 400  # no quote
+    assert client.post("/api/workspace/cards", json={"evidence_id": 99999, "front": "x"}).status_code == 404
+    assert client.post("/api/workspace/cards", json={"evidence_id": passage["id"], "front": "x", "project_id": 99}).status_code == 404
+
+    due = client.get("/api/workspace/study/due").json()
+    assert {c["id"] for c in due["cards"]} == {card["id"], written["id"]} and due["stats"]["due"] == 2 and due["stats"]["new"] == 2
+
+    reviewed = client.post(f"/api/workspace/cards/{card['id']}/review", json={"grade": 2}).json()
+    assert reviewed["card"]["interval_days"] == 1 and reviewed["card"]["reps"] == 1 and not reviewed["card"]["is_new"]
+    tomorrow = (__import__("datetime").date.today() + __import__("datetime").timedelta(days=1)).isoformat()
+    assert reviewed["card"]["due"] == tomorrow and reviewed["stats"]["due"] == 1 and reviewed["stats"]["reviewed_today"] == 1
+    assert [c["id"] for c in client.get("/api/workspace/study/due").json()["cards"]] == [written["id"]]  # not due again today
+
+    with clean, clean.cursor() as cursor:  # two days pass
+        cursor.execute("UPDATE cards SET due = CURRENT_DATE - 1 WHERE id = %s", (card["id"],))
+    again = client.post(f"/api/workspace/cards/{card['id']}/review", json={"grade": 2}).json()["card"]
+    assert again["interval_days"] == 6 and again["reps"] == 2
+    failed = client.post(f"/api/workspace/cards/{card['id']}/review", json={"grade": 0}).json()["card"]
+    assert failed["interval_days"] == 1 and failed["reps"] == 0 and failed["lapses"] == 1
+    assert client.post(f"/api/workspace/cards/{card['id']}/review", json={"grade": 4}).status_code == 422
+    assert client.post("/api/workspace/cards/99999/review", json={"grade": 2}).status_code == 404
+
+    stats = client.get("/api/workspace/study/stats").json()
+    assert stats["total"] == 2 and stats["reviews_30_days"] == 3 and stats["retention_30_days"] == 0.67
+    with clean, clean.cursor() as cursor:
+        cursor.execute("SELECT grade, interval_before, interval_after FROM review_log ORDER BY id")
+        assert cursor.fetchall() == [(2, 0, 1), (2, 1, 6), (0, 6, 1)]
+
+
+def test_card_management_suspension_bulk_and_cascade(app):
+    client = scholar(app)
+    pid = _project(client)
+    d1, d2 = _definition(client, "stack"), _definition(client, "queue", "A queue is a list with insertion at one end and deletion at the other.")
+    plain = _saved(client)
+    client.post("/api/workspace/collections", json={"name": "Defs"})
+    collection = client.get("/api/workspace/collections").json()["collections"][0]["id"]
+    for item in (d1, d2, plain):
+        client.put(f"/api/workspace/collections/{collection}/items/{item['id']}")
+        client.put(f"/api/workspace/projects/{pid}/evidence/{item['id']}")
+
+    bulk = client.post("/api/workspace/cards/bulk", json={"collection_id": collection}).json()
+    assert bulk == {"created": 2, "existing": 0, "skipped": 1}  # the plain passage needs a hand-written front
+    assert client.post("/api/workspace/cards/bulk", json={"project_id": pid}).json() == {"created": 0, "existing": 2, "skipped": 1}
+    assert client.post("/api/workspace/cards/bulk", json={}).status_code == 400
+    assert client.post("/api/workspace/cards/bulk", json={"collection_id": collection, "project_id": pid}).status_code == 400
+    assert client.post("/api/workspace/cards/bulk", json={"collection_id": 999}).status_code == 404
+
+    cards = client.get("/api/workspace/cards").json()
+    assert cards["total"] == 2 and {c["front"] for c in cards["cards"]} == {"What is meant by “stack”?", "What is meant by “queue”?"}
+    first = cards["cards"][0]
+    edited = client.patch(f"/api/workspace/cards/{first['id']}", json={"front": "Define it", "project_id": pid}).json()
+    assert edited["front"] == "Define it" and edited["project_id"] == pid
+    assert client.patch(f"/api/workspace/cards/{first['id']}", json={"front": " "}).status_code == 400
+    assert client.patch(f"/api/workspace/cards/{first['id']}", json={"project_id": 999}).status_code == 404
+    assert client.get(f"/api/workspace/cards?project_id={pid}").json()["total"] == 1
+
+    assert client.patch(f"/api/workspace/cards/{first['id']}", json={"suspended": True}).json()["suspended"] is True
+    due = client.get("/api/workspace/study/due").json()
+    assert first["id"] not in [c["id"] for c in due["cards"]] and due["stats"]["due"] == 1  # suspended cards are not queued
+    assert client.get(f"/api/workspace/study/due?project_id={pid}").json()["cards"] == []
+
+    by_item = {c["evidence"]["id"]: c for c in cards["cards"]}
+    assert first["evidence"]["id"] == d2["id"]  # newest card first: the queue card, now fronted "Define it"
+    other_front = client.post("/api/workspace/cards", json={"evidence_id": d2["id"], "front": "Another way to ask"}).json()
+    assert client.patch(f"/api/workspace/cards/{other_front['id']}", json={"front": "Define it"}).status_code == 409  # same item, same front
+
+    client.delete(f"/api/workspace/evidence/{d2['id']}")  # deleting the saved item removes its cards
+    remaining = client.get("/api/workspace/cards").json()["cards"]
+    assert [c["evidence"]["id"] for c in remaining] == [d1["id"]]
+    stack_card = by_item[d1["id"]]
+    assert client.delete(f"/api/workspace/cards/{stack_card['id']}").status_code == 200
+    assert client.delete(f"/api/workspace/cards/{stack_card['id']}").status_code == 404
+    assert client.get("/api/workspace/cards").json()["total"] == 0
+    dash = client.get("/api/workspace/dashboard").json()
+    assert dash["study"]["total"] == 0 and dash["saved_searches"] == [] and dash["unread_notifications"] == []
+
+
+def test_cards_are_private(app):
+    ada, bob = scholar(app), scholar(app, "bob@example.edu")
+    item = _definition(ada)
+    card = ada.post("/api/workspace/cards", json={"evidence_id": item["id"]}).json()
+    assert bob.post("/api/workspace/cards", json={"evidence_id": item["id"]}).status_code == 404  # her item
+    assert bob.get("/api/workspace/cards").json()["total"] == 0
+    assert bob.get("/api/workspace/study/due").json()["cards"] == []
+    assert bob.patch(f"/api/workspace/cards/{card['id']}", json={"front": "x"}).status_code == 404
+    assert bob.delete(f"/api/workspace/cards/{card['id']}").status_code == 404
+    assert bob.post(f"/api/workspace/cards/{card['id']}/review", json={"grade": 2}).status_code == 404
+    mine = bob.post("/api/workspace/collections", json={"name": "B"}).json()["id"]
+    assert bob.post("/api/workspace/cards/bulk", json={"collection_id": mine}).json()["created"] == 0
+    assert ada.get("/api/workspace/cards").json()["cards"][0]["reps"] == 0  # untouched
+
+
+# --- saved searches and notifications ---------------------------------------------------------------------------------------
+
+
+def test_saved_searches_alert_when_a_new_book_answers(app, clean):
+    import workspace_api
+
+    answers = {"books": [(1, "Data Structures", 12)]}
+
+    def fake_search(query, book_ids):
+        chosen = [b for b in answers["books"] if not book_ids or b[0] in book_ids]
+        return {"query": query, "results": [{"source": {"book_id": b, "book_title": t, "page_number": p}} for b, t, p in chosen]}
+
+    workspace_api.context.search = fake_search
+    try:
+        client = scholar(app)
+        saved = client.post("/api/workspace/saved-searches", json={"query": "  what is a  stack? "}).json()
+        assert saved["query"] == "what is a stack?" and saved["project_id"] is None
+        assert client.post("/api/workspace/saved-searches", json={"query": "WHAT is a stack?"}).json()["id"] == saved["id"]  # same search
+        assert client.post("/api/workspace/saved-searches", json={"query": "x", "project_id": 99}).status_code == 404
+        assert client.post("/api/workspace/saved-searches", json={"query": " "}).status_code == 400
+
+        first = client.post("/api/workspace/saved-searches/check").json()
+        assert first["checked"] == 1 and first["notifications"] == []  # the first run only records a baseline
+        again = client.post("/api/workspace/saved-searches/check").json()
+        assert again["checked"] == 0  # the library has not changed
+
+        with clean, clean.cursor() as cursor:  # a new book is added
+            cursor.execute("INSERT INTO books (title, author, file_path) VALUES ('Queues and Stacks', 'C. Author', './qs.pdf')")
+        answers["books"] = [(1, "Data Structures", 40), (3, "Queues and Stacks", 8)]
+        third = client.post("/api/workspace/saved-searches/check").json()
+        assert third["checked"] == 1 and [n["message"] for n in third["notifications"]] == ["New answer to “what is a stack?”: Queues and Stacks, p. 8"]
+        assert third["notifications"][0]["kind"] == "new_answer" and third["notifications"][0]["data"]["book_id"] == 3 and not third["notifications"][0]["read"]
+        assert client.get("/api/workspace/dashboard").json()["unread_notifications"][0]["message"].startswith("New answer")
+
+        # a changed library that gives no new book makes no notification
+        with clean, clean.cursor() as cursor:
+            cursor.execute("INSERT INTO books (title, file_path) VALUES ('Unrelated', './u.pdf')")
+        assert client.post("/api/workspace/saved-searches/check").json()["notifications"][0]["id"] == third["notifications"][0]["id"]
+        assert len(client.get("/api/workspace/notifications").json()["notifications"]) == 1
+
+        note_id = third["notifications"][0]["id"]
+        assert client.post(f"/api/workspace/notifications/read?notification_id={note_id}").json() == {"changed": 1}
+        assert client.get("/api/workspace/notifications?unread_only=true").json()["notifications"] == []
+        assert client.get("/api/workspace/notifications").json()["notifications"][0]["read"] is True
+        assert client.post("/api/workspace/notifications/read").json() == {"changed": 0}
+
+        assert client.delete(f"/api/workspace/saved-searches/{saved['id']}").status_code == 200
+        assert client.delete(f"/api/workspace/saved-searches/{saved['id']}").status_code == 404
+        assert client.get("/api/workspace/notifications").json()["notifications"] == []  # they go with their search
+    finally:
+        workspace_api.context.search = None
+
+
+def test_saved_search_scoped_to_a_project_and_limits(app, clean, monkeypatch):
+    import alerts
+    import workspace_api
+
+    seen_scopes = []
+
+    def fake_search(query, book_ids):
+        seen_scopes.append(book_ids)
+        return {"results": [{"source": {"book_id": 2, "book_title": "Algorithms", "page_number": 1}}]}
+
+    workspace_api.context.search = fake_search
+    try:
+        client = scholar(app)
+        pid = _project(client)
+        empty = client.post("/api/workspace/saved-searches", json={"query": "empty project", "project_id": pid}).json()
+        client.post(f"/api/workspace/projects/{pid}/books", json={"book_ids": [2]})
+        scoped = client.post("/api/workspace/saved-searches", json={"query": "scoped", "project_id": pid}).json()
+        assert scoped["id"] != empty["id"]
+        client.post("/api/workspace/saved-searches/check")
+        assert seen_scopes == [[2], [2]]  # both searches ran against the project's books once it had some
+        monkeypatch.setattr(alerts, "MAX_SAVED", 2)
+        assert client.post("/api/workspace/saved-searches", json={"query": "third"}).status_code == 409
+        # a project without books has nothing to search, so no search is run for it
+        pid2 = _project(client, "No books")
+        solo = scholar(app, "carol@example.edu")
+        pid3 = _project(solo, "Carol's empty")
+        solo.post("/api/workspace/saved-searches", json={"query": "nothing here", "project_id": pid3})
+        seen_scopes.clear()
+        assert solo.post("/api/workspace/saved-searches/check").json()["checked"] == 1 and seen_scopes == []
+        assert pid2 != pid3
+    finally:
+        workspace_api.context.search = None
+
+
+def test_saved_searches_and_notifications_are_private(app, clean):
+    import workspace_api
+
+    workspace_api.context.search = lambda q, b: {"results": []}
+    try:
+        ada, bob = scholar(app), scholar(app, "bob@example.edu")
+        saved = ada.post("/api/workspace/saved-searches", json={"query": "private query"}).json()
+        ada.post("/api/workspace/saved-searches/check")
+        with clean, clean.cursor() as cursor:
+            cursor.execute("INSERT INTO notifications (owner_id, saved_search_id, kind, message) SELECT id, NULL, 'new_answer', 'hers' FROM users WHERE email = 'ada@example.edu'")
+        assert bob.get("/api/workspace/saved-searches").json()["searches"] == []
+        assert bob.delete(f"/api/workspace/saved-searches/{saved['id']}").status_code == 404
+        assert bob.get("/api/workspace/notifications").json()["notifications"] == []
+        note = ada.get("/api/workspace/notifications").json()["notifications"][0]
+        assert bob.post(f"/api/workspace/notifications/read?notification_id={note['id']}").json() == {"changed": 0}
+        assert ada.get("/api/workspace/notifications?unread_only=true").json()["notifications"][0]["read"] is False
+        assert bob.post("/api/workspace/saved-searches/check").json() == {"checked": 0, "pending": 0, "notifications": []}
+    finally:
+        workspace_api.context.search = None

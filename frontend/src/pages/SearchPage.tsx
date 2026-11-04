@@ -1,11 +1,11 @@
 import { useMemo, useState } from 'react'
 import type { FormEvent } from 'react'
-import { Search } from 'lucide-react'
+import { Bell, Search } from 'lucide-react'
 import { ResultSkeleton } from '../components/ResultSkeleton'
 import { ResultsView } from '../components/layouts/ResultsView'
 import { searchRecords } from '../lib/searchApi'
 import { useAuth } from '../lib/auth'
-import { recordActivity } from '../lib/workspaceApi'
+import { recordActivity, saveSearch } from '../lib/workspaceApi'
 import type { Layout, SearchResult } from '../types/search'
 
 const EXAMPLE_QUERIES = [
@@ -26,6 +26,7 @@ export function SearchPage() {
     const [isLoading, setIsLoading] = useState(false)
     const [hasSearched, setHasSearched] = useState(false)
     const [error, setError] = useState<string | null>(null)
+    const [alertNote, setAlertNote] = useState<string | null>(null)
 
     const isSearchDisabled = useMemo(() => query.trim().length === 0 || isLoading, [query, isLoading])
 
@@ -38,6 +39,7 @@ export function SearchPage() {
         setHasSearched(true)
         setIsLoading(true)
         setError(null)
+        setAlertNote(null)
 
         try {
             const data = await searchRecords(cleaned)
@@ -150,6 +152,23 @@ export function SearchPage() {
 
                 {!isLoading && !error && results.length === 0 && (
                     <div className="border-2 border-zinc-950 bg-white p-4 text-sm text-zinc-800">No matching records found for this query.</div>
+                )}
+
+                {!isLoading && !error && user && (
+                    <p className="flex flex-wrap items-center gap-2 text-sm text-zinc-600">
+                        <button
+                            type="button"
+                            onClick={() => {
+                                saveSearch(query.trim())
+                                    .then(() => setAlertNote('Saved. You will see a note on your dashboard when a new book answers this.'))
+                                    .catch((failure: unknown) => setAlertNote(failure instanceof Error ? failure.message : 'Could not save the search.'))
+                            }}
+                            className="inline-flex items-center gap-1 underline-offset-4 hover:underline"
+                        >
+                            <Bell className="h-4 w-4" /> Tell me when a new book answers this
+                        </button>
+                        {alertNote && <span role="status">{alertNote}</span>}
+                    </p>
                 )}
 
                 {!isLoading && !error && results.length > 0 && <ResultsView results={results} layout={layout} query={query} />}

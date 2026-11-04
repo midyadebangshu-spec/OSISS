@@ -1,4 +1,4 @@
-import { BookMarked, FolderKanban, FolderOpen, LayoutDashboard, NotebookPen, PenLine } from 'lucide-react'
+import { BookMarked, Layers, FolderKanban, FolderOpen, LayoutDashboard, NotebookPen, PenLine } from 'lucide-react'
 import { useAuth } from '../lib/auth'
 import { workspaceHref } from '../lib/route'
 import type { WorkspaceTab } from '../lib/route'
@@ -7,6 +7,8 @@ import { DashboardView } from '../components/workspace/DashboardView'
 import { NotesView } from '../components/workspace/NotesView'
 import { ProjectsView } from '../components/workspace/ProjectsView'
 import { ReferencesView } from '../components/workspace/ReferencesView'
+import { BoardView } from '../components/workspace/BoardView'
+import { StudyView } from '../components/workspace/StudyView'
 import { WritingView } from '../components/workspace/WritingView'
 
 const TABS: { tab: WorkspaceTab; label: string; icon: React.ReactNode }[] = [
@@ -15,6 +17,7 @@ const TABS: { tab: WorkspaceTab; label: string; icon: React.ReactNode }[] = [
     { tab: 'collections', label: 'Collections', icon: <FolderOpen className="h-4 w-4" /> },
     { tab: 'notes', label: 'Notes', icon: <NotebookPen className="h-4 w-4" /> },
     { tab: 'writing', label: 'Writing', icon: <PenLine className="h-4 w-4" /> },
+    { tab: 'study', label: 'Study', icon: <Layers className="h-4 w-4" /> },
     { tab: 'references', label: 'References', icon: <BookMarked className="h-4 w-4" /> },
 ]
 
@@ -35,7 +38,7 @@ export function WorkspacePage({ tab, id }: { tab: WorkspaceTab; id: number | nul
 
     return (
         <section className="mx-auto max-w-6xl space-y-5">
-            <nav aria-label="Workspace" className="flex gap-5 border-b border-zinc-200">
+            <nav aria-label="Workspace" className="flex flex-wrap gap-x-5 border-b border-zinc-200">
                 {TABS.map((item) => (
                     <a
                         key={item.tab}
@@ -51,7 +54,9 @@ export function WorkspacePage({ tab, id }: { tab: WorkspaceTab; id: number | nul
             {tab === 'projects' && <ProjectsView id={id} />}
             {tab === 'collections' && <CollectionsView id={id} />}
             {tab === 'notes' && <NotesView id={id} />}
+            {tab === 'board' && id !== null && <BoardView key={id} projectId={id} />}
             {tab === 'writing' && <WritingView id={id} />}
+            {tab === 'study' && <StudyView />}
             {tab === 'references' && <ReferencesView />}
         </section>
     )

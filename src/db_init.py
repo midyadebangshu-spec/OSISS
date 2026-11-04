@@ -286,6 +286,84 @@ CREATE TABLE IF NOT EXISTS drafts (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 CREATE INDEX IF NOT EXISTS idx_drafts_owner ON drafts(owner_id, updated_at DESC);
+-- Research board (src/board.py): claims, evidence, concepts and notes laid out for a project, joined by typed edges.
+CREATE TABLE IF NOT EXISTS board_nodes (
+    id BIGSERIAL PRIMARY KEY,
+    project_id BIGINT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    kind TEXT NOT NULL,
+    text TEXT NOT NULL DEFAULT '',
+    evidence_id BIGINT REFERENCES evidence_items(id) ON DELETE CASCADE,
+    note_id BIGINT REFERENCES notes(id) ON DELETE CASCADE,
+    concept_key TEXT,
+    x REAL NOT NULL DEFAULT 0,
+    y REAL NOT NULL DEFAULT 0,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_board_nodes_project ON board_nodes(project_id);
+CREATE TABLE IF NOT EXISTS board_edges (
+    id BIGSERIAL PRIMARY KEY,
+    project_id BIGINT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    source_id BIGINT NOT NULL REFERENCES board_nodes(id) ON DELETE CASCADE,
+    target_id BIGINT NOT NULL REFERENCES board_nodes(id) ON DELETE CASCADE,
+    relation TEXT NOT NULL,
+    note TEXT NOT NULL DEFAULT '',
+    UNIQUE (source_id, target_id, relation)
+);
+CREATE INDEX IF NOT EXISTS idx_board_edges_project ON board_edges(project_id);
+
+-- Flashcards with spaced repetition (src/srs.py, src/study.py). The back of a card is always the saved item's cited quote.
+CREATE TABLE IF NOT EXISTS cards (
+    id BIGSERIAL PRIMARY KEY,
+    owner_id INT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    evidence_id BIGINT NOT NULL REFERENCES evidence_items(id) ON DELETE CASCADE,
+    project_id BIGINT REFERENCES projects(id) ON DELETE SET NULL,
+    front TEXT NOT NULL,
+    ease REAL NOT NULL DEFAULT 2.5,
+    interval_days INT NOT NULL DEFAULT 0,
+    reps INT NOT NULL DEFAULT 0,
+    lapses INT NOT NULL DEFAULT 0,
+    due DATE NOT NULL DEFAULT CURRENT_DATE,
+    last_reviewed TIMESTAMPTZ,
+    suspended BOOLEAN NOT NULL DEFAULT FALSE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE (owner_id, evidence_id, front)
+);
+CREATE INDEX IF NOT EXISTS idx_cards_due ON cards(owner_id, due);
+CREATE TABLE IF NOT EXISTS review_log (
+    id BIGSERIAL PRIMARY KEY,
+    card_id BIGINT NOT NULL REFERENCES cards(id) ON DELETE CASCADE,
+    owner_id INT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    grade SMALLINT NOT NULL,
+    interval_before INT NOT NULL,
+    interval_after INT NOT NULL,
+    reviewed_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_review_log_owner ON review_log(owner_id, reviewed_at);
+
+-- Saved searches that tell the scholar when a new book answers them (src/alerts.py); notifications are in-app only.
+CREATE TABLE IF NOT EXISTS saved_searches (
+    id BIGSERIAL PRIMARY KEY,
+    owner_id INT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    query TEXT NOT NULL,
+    project_id BIGINT REFERENCES projects(id) ON DELETE SET NULL,
+    fingerprint TEXT,
+    seen JSONB,
+    last_checked_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_saved_searches_owner ON saved_searches(owner_id);
+CREATE TABLE IF NOT EXISTS notifications (
+    id BIGSERIAL PRIMARY KEY,
+    owner_id INT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    saved_search_id BIGINT REFERENCES saved_searches(id) ON DELETE CASCADE,
+    kind TEXT NOT NULL,
+    message TEXT NOT NULL,
+    data JSONB NOT NULL DEFAULT '{}'::jsonb,
+    read BOOLEAN NOT NULL DEFAULT FALSE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_notifications_owner ON notifications(owner_id, read, created_at DESC);
+
 -- Where the scholar stopped reading a book (the reader resumes there).
 ALTER TABLE user_activity ADD COLUMN IF NOT EXISTS page_number INT;
 """

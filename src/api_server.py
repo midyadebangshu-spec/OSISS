@@ -123,6 +123,9 @@ app.include_router(concept_api.router)
 app.include_router(library_api.router)
 app.include_router(accounts_api.router)
 app.include_router(workspace_api.router)
+workspace_api.context.search = lambda query, book_ids: search_and_extract(
+    query, None, **({"book_ids": book_ids} if book_ids else {})
+)
 
 
 def same_site(request: Request) -> bool:

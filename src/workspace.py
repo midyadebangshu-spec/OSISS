@@ -476,6 +476,9 @@ def record_activity(
 
 
 def dashboard(connection, owner_id: int) -> Dict[str, Any]:
+    import alerts  # pylint: disable=import-outside-toplevel
+    import study  # pylint: disable=import-outside-toplevel
+
     with connection.cursor() as cursor:
         cursor.execute(
             "SELECT (SELECT COUNT(*) FROM evidence_items WHERE owner_id = %s), "
@@ -511,6 +514,9 @@ def dashboard(connection, owner_id: int) -> Dict[str, Any]:
         "collections": list_collections(connection, owner_id)[:6],
         "recent_notes": list_notes(connection, owner_id, limit=5),
         "projects": list_projects(connection, owner_id)[:4],
+        "study": study.stats(connection, owner_id),
+        "saved_searches": alerts.list_searches(connection, owner_id),
+        "unread_notifications": alerts.list_notifications(connection, owner_id, unread_only=True),
         "new_books_30_days": new_books,
     }
 
@@ -530,8 +536,15 @@ def export_all(connection, owner_id: int) -> Dict[str, Any]:
             book_ids = [row[0] for row in cursor.fetchall()]
             cursor.execute("SELECT evidence_id FROM project_evidence WHERE project_id = %s ORDER BY evidence_id", (project["id"],))
             evidence_ids = [row[0] for row in cursor.fetchall()]
-        projects.append({**project, "book_ids": book_ids, "evidence_ids": evidence_ids})
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT id, kind, text, evidence_id, note_id, concept_key, x, y FROM board_nodes WHERE project_id = %s ORDER BY id", (project["id"],))
+            nodes = [dict(zip(("id", "kind", "text", "evidence_id", "note_id", "concept_key", "x", "y"), row)) for row in cursor.fetchall()]
+            cursor.execute("SELECT id, source_id, target_id, relation, note FROM board_edges WHERE project_id = %s ORDER BY id", (project["id"],))
+            edges = [dict(zip(("id", "source_id", "target_id", "relation", "note"), row)) for row in cursor.fetchall()]
+        projects.append({**project, "book_ids": book_ids, "evidence_ids": evidence_ids, "board": {"nodes": nodes, "edges": edges}})
+    import alerts  # pylint: disable=import-outside-toplevel
     import drafts  # pylint: disable=import-outside-toplevel
+    import study  # pylint: disable=import-outside-toplevel
 
     return {
         "evidence": evidence,
@@ -539,6 +552,8 @@ def export_all(connection, owner_id: int) -> Dict[str, Any]:
         "notes": list_notes(connection, owner_id, limit=1_000_000),
         "projects": projects,
         "drafts": [drafts.get_draft(connection, owner_id, d["id"]) for d in drafts.list_drafts(connection, owner_id)],
+        "cards": study.list_cards(connection, owner_id, limit=500)["cards"],
+        "saved_searches": alerts.list_searches(connection, owner_id),
     }
 
 

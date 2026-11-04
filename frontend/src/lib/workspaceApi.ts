@@ -1,4 +1,5 @@
 import type {
+    AppNotification, Board, BoardKind, BoardNode, BoardEdge, BoardRelation, Card, CardGrade, SavedSearch, StudyStats,
     CitationStyle, Collection, Dashboard, Draft, DraftCheck, DraftSummary, Evidence, EvidenceDraft, Note, Project,
     ProjectDetail, References, RenderedDraft, User,
 } from '../types/workspace'
@@ -207,3 +208,64 @@ export function getReferences(style: CitationStyle, projectId?: number, signal?:
 export function referencesFileUrl(format: 'bibtex' | 'ris', projectId?: number): string {
     return `/api/workspace/references?format=${format}${projectId ? `&project_id=${projectId}` : ''}`
 }
+
+// --- research board -------------------------------------------------------------------------------------------
+
+const boardBase = (projectId: number) => `/api/workspace/projects/${projectId}/board`
+
+export const getBoard = (projectId: number, signal?: AbortSignal) => get<Board>(boardBase(projectId), signal)
+
+export const addBoardNode = (
+    projectId: number,
+    node: { kind: BoardKind; text?: string; evidence_id?: number; note_id?: number; concept_key?: string; x?: number; y?: number },
+) => request<BoardNode>('POST', `${boardBase(projectId)}/nodes`, node)
+
+export const moveBoardNode = (projectId: number, nodeId: number, fields: { x?: number; y?: number; text?: string }) =>
+    request<BoardNode>('PATCH', `${boardBase(projectId)}/nodes/${nodeId}`, fields)
+
+export const deleteBoardNode = (projectId: number, nodeId: number) => request('DELETE', `${boardBase(projectId)}/nodes/${nodeId}`)
+
+export const addBoardEdge = (projectId: number, sourceId: number, targetId: number, relation: BoardRelation, note = '') =>
+    request<BoardEdge>('POST', `${boardBase(projectId)}/edges`, { source_id: sourceId, target_id: targetId, relation, note })
+
+export const deleteBoardEdge = (projectId: number, edgeId: number) => request('DELETE', `${boardBase(projectId)}/edges/${edgeId}`)
+
+export const seedBoardConcept = (projectId: number, conceptId: number) =>
+    request<Board & { neighbours: number }>('POST', `${boardBase(projectId)}/seed`, { concept_id: conceptId })
+
+export const boardOutline = (projectId: number) => request<Draft>('POST', `${boardBase(projectId)}/outline`)
+
+// --- study: flashcards ----------------------------------------------------------------------------------------
+
+export const createCard = (evidenceId: number, front?: string, projectId?: number) =>
+    request<Card>('POST', '/api/workspace/cards', { evidence_id: evidenceId, front: front ?? null, project_id: projectId ?? null })
+
+export const createCardsBulk = (target: { collection_id?: number; project_id?: number }) =>
+    request<{ created: number; existing: number; skipped: number }>('POST', '/api/workspace/cards/bulk', target)
+
+export const listCards = (projectId?: number, signal?: AbortSignal) =>
+    get<{ total: number; cards: Card[] }>(`/api/workspace/cards?limit=500${projectId ? `&project_id=${projectId}` : ''}`, signal)
+
+export const updateCard = (id: number, fields: { front?: string; suspended?: boolean }) =>
+    request<Card>('PATCH', `/api/workspace/cards/${id}`, fields)
+
+export const deleteCard = (id: number) => request('DELETE', `/api/workspace/cards/${id}`)
+
+export const getDueCards = (projectId?: number, signal?: AbortSignal) =>
+    get<{ cards: Card[]; stats: StudyStats }>(`/api/workspace/study/due?limit=20${projectId ? `&project_id=${projectId}` : ''}`, signal)
+
+export const reviewCard = (id: number, grade: CardGrade) =>
+    request<{ card: Card; stats: StudyStats }>('POST', `/api/workspace/cards/${id}/review`, { grade })
+
+// --- saved searches and notifications -------------------------------------------------------------------------
+
+export const saveSearch = (query: string, projectId?: number) =>
+    request<SavedSearch>('POST', '/api/workspace/saved-searches', { query, project_id: projectId ?? null })
+
+export const deleteSavedSearch = (id: number) => request('DELETE', `/api/workspace/saved-searches/${id}`)
+
+export const checkSavedSearches = () =>
+    request<{ checked: number; pending: number; notifications: AppNotification[] }>('POST', '/api/workspace/saved-searches/check')
+
+export const markNotificationsRead = (id?: number) =>
+    request<{ changed: number }>('POST', `/api/workspace/notifications/read${id ? `?notification_id=${id}` : ''}`)

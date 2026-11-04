@@ -8,15 +8,30 @@ from __future__ import annotations
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
+from starlette.concurrency import run_in_threadpool
 from pydantic import BaseModel, Field
 
+import alerts
+import board
 import citations
 import drafts
+import load_control
+import study
 import workspace
 from accounts_api import current_user
 from db_pool import db
 
 router = APIRouter(prefix="/api/workspace", tags=["workspace"])
+
+
+class _Context:
+    """Set by api_server: `search(query, book_ids)` runs the search pipeline (saved-search alerts need it)."""
+
+    def __init__(self):
+        self.search = None
+
+
+context = _Context()
 User = Dict[str, Any]
 
 
@@ -72,6 +87,59 @@ class DraftIn(BaseModel):
     title: Optional[str] = Field(default=None, max_length=400)
     body: Optional[str] = Field(default=None, max_length=drafts.MAX_BODY * 2)
     style: Optional[str] = Field(default=None, max_length=20)
+    project_id: Optional[int] = None
+
+
+class NodeIn(BaseModel):
+    kind: str
+    text: str = Field(default="", max_length=board.CLAIM_MAX * 2)
+    evidence_id: Optional[int] = None
+    note_id: Optional[int] = None
+    concept_key: Optional[str] = Field(default=None, max_length=400)
+    x: Optional[float] = None
+    y: Optional[float] = None
+
+
+class NodePatch(BaseModel):
+    text: Optional[str] = Field(default=None, max_length=board.CLAIM_MAX * 2)
+    x: Optional[float] = None
+    y: Optional[float] = None
+
+
+class EdgeIn(BaseModel):
+    source_id: int
+    target_id: int
+    relation: str = Field(max_length=20)
+    note: str = Field(default="", max_length=600)
+
+
+class SeedIn(BaseModel):
+    concept_id: int
+
+
+class CardIn(BaseModel):
+    evidence_id: int
+    front: Optional[str] = Field(default=None, max_length=study.MAX_FRONT * 2)
+    project_id: Optional[int] = None
+
+
+class CardPatch(BaseModel):
+    front: Optional[str] = Field(default=None, max_length=study.MAX_FRONT * 2)
+    suspended: Optional[bool] = None
+    project_id: Optional[int] = None
+
+
+class BulkCards(BaseModel):
+    collection_id: Optional[int] = None
+    project_id: Optional[int] = None
+
+
+class ReviewIn(BaseModel):
+    grade: int = Field(ge=0, le=3)
+
+
+class SavedSearchIn(BaseModel):
+    query: str = Field(min_length=1, max_length=600)
     project_id: Optional[int] = None
 
 
@@ -351,6 +419,279 @@ def detach_evidence(project_id: int, evidence_id: int, user: User = Depends(curr
         _found(workspace.detach_evidence(connection, user["id"], project_id, evidence_id))
         connection.commit()
     return {"ok": True}
+
+
+# --- research board -----------------------------------------------------------------------------------------------
+
+
+def _board_fail(exc: board.BoardError):
+    raise HTTPException(exc.status, str(exc)) from exc
+
+
+@router.get("/projects/{project_id}/board")
+def get_board(project_id: int, user: User = Depends(current_user)):
+    try:
+        with db() as connection:
+            return board.get_board(connection, user["id"], project_id)
+    except board.BoardError as exc:
+        _board_fail(exc)
+
+
+@router.post("/projects/{project_id}/board/nodes")
+def add_board_node(project_id: int, payload: NodeIn, user: User = Depends(current_user)):
+    try:
+        with db() as connection:
+            node = board.add_node(
+                connection, user["id"], project_id, payload.kind, payload.text, payload.evidence_id, payload.note_id,
+                payload.concept_key, payload.x, payload.y,
+            )
+            connection.commit()
+    except board.BoardError as exc:
+        _board_fail(exc)
+    return node
+
+
+@router.patch("/projects/{project_id}/board/nodes/{node_id}")
+def update_board_node(project_id: int, node_id: int, payload: NodePatch, user: User = Depends(current_user)):
+    try:
+        with db() as connection:
+            node = board.update_node(connection, user["id"], project_id, node_id, payload.text, payload.x, payload.y)
+            connection.commit()
+    except board.BoardError as exc:
+        _board_fail(exc)
+    return node
+
+
+@router.delete("/projects/{project_id}/board/nodes/{node_id}")
+def delete_board_node(project_id: int, node_id: int, user: User = Depends(current_user)):
+    try:
+        with db() as connection:
+            _found(board.delete_node(connection, user["id"], project_id, node_id))
+            connection.commit()
+    except board.BoardError as exc:
+        _board_fail(exc)
+    return {"ok": True}
+
+
+@router.post("/projects/{project_id}/board/edges")
+def add_board_edge(project_id: int, payload: EdgeIn, user: User = Depends(current_user)):
+    try:
+        with db() as connection:
+            edge = board.add_edge(connection, user["id"], project_id, payload.source_id, payload.target_id, payload.relation, payload.note)
+            connection.commit()
+    except board.BoardError as exc:
+        _board_fail(exc)
+    return edge
+
+
+@router.delete("/projects/{project_id}/board/edges/{edge_id}")
+def delete_board_edge(project_id: int, edge_id: int, user: User = Depends(current_user)):
+    try:
+        with db() as connection:
+            _found(board.delete_edge(connection, user["id"], project_id, edge_id))
+            connection.commit()
+    except board.BoardError as exc:
+        _board_fail(exc)
+    return {"ok": True}
+
+
+@router.post("/projects/{project_id}/board/seed")
+def seed_board(project_id: int, payload: SeedIn, user: User = Depends(current_user)):
+    """Put a concept and its strongest neighbours on the board."""
+    try:
+        with db() as connection:
+            result = board.seed_concept(connection, user["id"], project_id, payload.concept_id)
+            connection.commit()
+            return {**result, **board.get_board(connection, user["id"], project_id)}
+    except board.BoardError as exc:
+        _board_fail(exc)
+
+
+@router.post("/projects/{project_id}/board/outline")
+def board_outline(project_id: int, user: User = Depends(current_user)):
+    """A new draft made from the board: claims as headings with their evidence as cited block quotations."""
+    try:
+        with db() as connection:
+            draft = board.create_outline_draft(connection, user["id"], project_id)
+            connection.commit()
+    except board.BoardError as exc:
+        _board_fail(exc)
+    return draft
+
+
+# --- study: flashcards ----------------------------------------------------------------------------------------------
+
+
+def _study_fail(exc: study.StudyError):
+    raise HTTPException(exc.status, str(exc)) from exc
+
+
+@router.post("/cards")
+def create_card(payload: CardIn, user: User = Depends(current_user)):
+    try:
+        with db() as connection:
+            card = study.create_card(connection, user["id"], payload.evidence_id, payload.front, payload.project_id)
+            connection.commit()
+    except study.StudyError as exc:
+        _study_fail(exc)
+    return card
+
+
+@router.post("/cards/bulk")
+def create_cards_bulk(payload: BulkCards, user: User = Depends(current_user)):
+    """Cards with automatic fronts for the definitions in a collection or project."""
+    try:
+        with db() as connection:
+            result = study.create_cards_bulk(connection, user["id"], payload.collection_id, payload.project_id)
+            connection.commit()
+    except study.StudyError as exc:
+        _study_fail(exc)
+    return result
+
+
+@router.get("/cards")
+def list_cards(
+    project_id: Optional[int] = None, limit: int = Query(default=100, ge=1, le=500), offset: int = Query(default=0, ge=0),
+    user: User = Depends(current_user),
+):
+    with db() as connection:
+        return study.list_cards(connection, user["id"], project_id, limit, offset)
+
+
+@router.patch("/cards/{card_id}")
+def update_card(card_id: int, payload: CardPatch, user: User = Depends(current_user)):
+    try:
+        with db() as connection:
+            card = _found(
+                study.update_card(
+                    connection, user["id"], card_id, payload.front, payload.suspended, payload.project_id,
+                    set_project="project_id" in payload.model_fields_set,
+                )
+            )
+            connection.commit()
+    except study.StudyError as exc:
+        _study_fail(exc)
+    return card
+
+
+@router.delete("/cards/{card_id}")
+def delete_card(card_id: int, user: User = Depends(current_user)):
+    with db() as connection:
+        _found(study.delete_card(connection, user["id"], card_id))
+        connection.commit()
+    return {"ok": True}
+
+
+@router.get("/study/due")
+def due_cards(project_id: Optional[int] = None, limit: int = Query(default=20, ge=1, le=100), user: User = Depends(current_user)):
+    with db() as connection:
+        return {"cards": study.due_cards(connection, user["id"], project_id, limit), "stats": study.stats(connection, user["id"], project_id)}
+
+
+@router.post("/cards/{card_id}/review")
+def review_card(card_id: int, payload: ReviewIn, user: User = Depends(current_user)):
+    try:
+        with db() as connection:
+            card = _found(study.review_card(connection, user["id"], card_id, payload.grade))
+            connection.commit()
+            return {"card": card, "stats": study.stats(connection, user["id"])}
+    except study.StudyError as exc:
+        _study_fail(exc)
+
+
+@router.get("/study/stats")
+def study_stats(project_id: Optional[int] = None, user: User = Depends(current_user)):
+    with db() as connection:
+        return study.stats(connection, user["id"], project_id)
+
+
+# --- saved searches and notifications -------------------------------------------------------------------------------------
+
+
+def _alert_fail(exc: alerts.AlertError):
+    raise HTTPException(exc.status, str(exc)) from exc
+
+
+@router.get("/saved-searches")
+def list_saved_searches(user: User = Depends(current_user)):
+    with db() as connection:
+        return {"searches": alerts.list_searches(connection, user["id"])}
+
+
+@router.post("/saved-searches")
+def save_search(payload: SavedSearchIn, user: User = Depends(current_user)):
+    try:
+        with db() as connection:
+            search = alerts.save_search(connection, user["id"], payload.query, payload.project_id)
+            connection.commit()
+    except alerts.AlertError as exc:
+        _alert_fail(exc)
+    return search
+
+
+@router.delete("/saved-searches/{search_id}")
+def delete_saved_search(search_id: int, user: User = Depends(current_user)):
+    with db() as connection:
+        _found(alerts.delete_search(connection, user["id"], search_id))
+        connection.commit()
+    return {"ok": True}
+
+
+@router.post("/saved-searches/check")
+async def check_saved_searches(user: User = Depends(current_user)):
+    """Re-run the saved searches the library has changed under (a few per call), through the search queue; returns the
+    new notifications. Cheap when nothing changed."""
+    def collect():
+        with db() as connection:
+            current = alerts.library_fingerprint(connection)
+            return current, alerts.due_searches(connection, user["id"], current)
+
+    fingerprint, due = await run_in_threadpool(collect)
+    checked = 0
+
+    async def run_one(search) -> Optional[Dict[str, Any]]:
+        if search["book_ids"] == []:  # a project without books has nothing to search
+            return {"results": []}
+        return await load_control.gate().run(lambda: run_in_threadpool(context.search, search["query"], search["book_ids"]))
+
+    if due and context.search is not None:
+        for search in due:
+            try:
+                results = await run_one(search)
+            except load_control.Busy:
+                break  # the server is busy: try again at the next visit
+            except Exception as exc:  # pylint: disable=broad-except
+                print(f"[OSISS] Saved search check failed: {exc}")
+                continue
+
+            def record(found=results, search_id=search["id"]):
+                with db() as connection:
+                    alerts.record_result(connection, user["id"], search_id, fingerprint, (found or {}).get("results", []))
+                    connection.commit()
+
+            await run_in_threadpool(record)
+            checked += 1
+
+    def read():
+        with db() as connection:
+            return alerts.list_notifications(connection, user["id"], unread_only=True)
+
+    return {"checked": checked, "pending": max(0, len(due) - checked), "notifications": await run_in_threadpool(read)}
+
+
+@router.get("/notifications")
+def list_notifications(unread_only: bool = False, user: User = Depends(current_user)):
+    with db() as connection:
+        return {"notifications": alerts.list_notifications(connection, user["id"], unread_only)}
+
+
+@router.post("/notifications/read")
+def read_notifications(notification_id: Optional[int] = None, user: User = Depends(current_user)):
+    """Marks one notification (or, without an id, all of them) as read."""
+    with db() as connection:
+        changed = alerts.mark_read(connection, user["id"], notification_id)
+        connection.commit()
+    return {"changed": changed}
 
 
 # --- writing studio -----------------------------------------------------------------------------------------------

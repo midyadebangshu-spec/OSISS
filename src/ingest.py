@@ -143,8 +143,9 @@ def insert_book(
 ) -> int:
     """Insert a book record and return its ID."""
     query = """
-    INSERT INTO books (title, author, publication_year, department, file_path, language_code, file_hash, source_version)
-    VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+    INSERT INTO books (title, author, publication_year, department, file_path, language_code, file_hash, source_version,
+                       publisher, edition, isbn, page_offset)
+    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
     RETURNING id
     """
 
@@ -160,6 +161,10 @@ def insert_book(
                 metadata.get("language_code"),
                 file_hash,
                 source_version,
+                metadata.get("publisher"),
+                metadata.get("edition"),
+                metadata.get("isbn"),
+                metadata.get("page_offset"),
             ),
         )
         return cursor.fetchone()[0]

@@ -1,5 +1,6 @@
 import { Trash2 } from 'lucide-react'
-import { libraryHref } from '../../lib/route'
+import { libraryHref, readerHref } from '../../lib/route'
+import { pageLabel } from '../../lib/results'
 import type { Evidence } from '../../types/workspace'
 
 /** One saved item with its source. `onRemove` is the action offered (remove from collection, or delete). */
@@ -28,7 +29,14 @@ export function EvidenceCard({ item, onRemove, removeLabel = 'Delete' }: { item:
                         <span className="font-medium text-zinc-950">{item.book_title}</span>
                     )}
                     {item.book_author && <span> · {item.book_author}</span>}
-                    {item.page_number && <span> · Page {item.page_number}</span>}
+                    {item.page_number && item.book_id && (
+                        <span>
+                            {' · '}
+                            <a href={readerHref(item.book_id, item.page_number)} className="underline-offset-4 hover:underline">
+                                Page {pageLabel(item.page_number, item.printed_page)}
+                            </a>
+                        </span>
+                    )}
                 </p>
             )}
         </article>

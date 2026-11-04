@@ -149,3 +149,53 @@ def test_library_routes(client):
     assert [page["page"] for page in pages["pages"]] == [2]
     assert client.get("/api/library/999").status_code == 404
     assert client.get("/api/library/1/pages", params={"count": 500}).status_code == 422
+
+
+def test_reader_page_and_printed_numbers(client, stored):
+    page = client.get("/api/library/1/page/1").json()
+    assert page["page"] == 1 and page["page_count"] == 2 and page["previous"] is None and page["next"] == 2
+    assert page["image"] == f"/data/assets/{FILE_HASH}/p1.webp" and page["title"] == "Optics"
+    assert page["printed_label"] is None and page["citation_page"] == "1"
+    assert page["words"] and all(0 <= w[0] < w[2] <= 1 and 0 <= w[1] < w[3] <= 1 for w in page["words"])
+    assert "Light" in {w[4] for w in page["words"]} or any("Light" in w[4] for w in page["words"])
+
+    with stored, stored.cursor() as cursor:
+        cursor.execute("UPDATE books SET page_offset = 0 WHERE id = 1")
+    page = client.get("/api/library/1/page/2").json()
+    assert page["printed_label"] == "2" and page["citation_page"] == "2" and page["next"] is None and page["previous"] == 1
+    with stored, stored.cursor() as cursor:
+        cursor.execute("UPDATE books SET page_offset = 1 WHERE id = 1")  # printed page 1 is PDF page 2
+    page = client.get("/api/library/1/page/2").json()
+    assert page["printed_label"] == "1" and page["citation_page"] == "1 (PDF 2)"
+    assert client.get("/api/library/1/page/1").json()["printed_label"] is None  # the cover has no number
+    assert client.get("/api/library/1/find-page", params={"label": "1"}).json() == {"page": 2}
+    assert client.get("/api/library/1/find-page", params={"label": "abc"}).status_code == 404
+    with stored, stored.cursor() as cursor:
+        cursor.execute("UPDATE books SET page_offset = NULL WHERE id = 1")
+
+    assert client.get("/api/library/1/page/3").status_code == 404
+    assert client.get("/api/library/1/page/0").status_code == 422
+    assert client.get("/api/library/999/page/1").status_code == 404
+
+
+def test_pdf_labels_are_read_once_and_kept(stored):
+    with stored, stored.cursor() as cursor:
+        cursor.execute("UPDATE books SET page_labels = NULL, page_offset = NULL WHERE id = 1")
+    library.clear_cache()
+    assert library.book_label_info(stored, 1) == (None, None)  # this PDF defines no labels
+    with stored.cursor() as cursor:
+        cursor.execute("SELECT page_labels FROM books WHERE id = 1")
+        assert cursor.fetchone()[0] == []  # remembered as "has none", so the PDF is not opened again
+    with stored.cursor() as cursor:  # a book whose file cannot be read is retried, not remembered
+        cursor.execute("SELECT page_labels FROM books WHERE id = 2")
+        library.book_label_info(stored, 2)
+        cursor.execute("SELECT page_labels FROM books WHERE id = 2")
+        assert cursor.fetchone()[0] is None
+    assert library.find_page_by_label(stored, 1, "2") == 2  # no labels, no offset: the number is the position
+    assert library.find_page_by_label(stored, 1, "") is None
+
+
+def test_suggest_page_offset_reads_the_pdf(stored):
+    result = library.suggest_page_offset(stored, 1)
+    assert result["offset"] is None and result["sampled_pages"] >= 1 and result["reason"]
+    assert library.suggest_page_offset(stored, 999)["offset"] is None

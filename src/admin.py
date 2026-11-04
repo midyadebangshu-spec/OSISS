@@ -16,13 +16,14 @@ from typing import Any, Dict, List, Optional
 
 from psycopg2.extras import Json
 
+import page_labels
 from config import settings
 
-METADATA_FIELDS = ("title", "author", "publication_year", "department")
+METADATA_FIELDS = ("title", "author", "publication_year", "department", "publisher", "edition", "isbn", "page_offset")
 
 BOOK_COLUMNS = """
     b.id, b.title, b.author, b.publication_year, b.department, b.file_path, b.language_code, b.file_hash,
-    b.created_at, COUNT(c.id) AS chunk_count, COUNT(DISTINCT c.page_number) AS page_count,
+    b.created_at, b.publisher, b.edition, b.isbn, b.page_offset, COUNT(c.id) AS chunk_count, COUNT(DISTINCT c.page_number) AS page_count,
     COUNT(c.id) FILTER (WHERE c.is_exercise) AS exercise_chunks
 """
 
@@ -107,7 +108,8 @@ def find_book_by_hash(connection, file_hash: str) -> Optional[Dict[str, Any]]:
 
 
 def clean_metadata(data: Dict[str, Any], partial: bool = False) -> Dict[str, Any]:
-    """Validate title / author / publication_year / department; empty strings become NULL."""
+    """Validate the metadata fields (title, author, year, department, publisher, edition, ISBN, page offset); empty
+    strings become NULL."""
     unknown = set(data) - set(METADATA_FIELDS)
     if unknown:
         raise AdminError(f"Unknown field(s): {', '.join(sorted(unknown))}")
@@ -127,6 +129,26 @@ def clean_metadata(data: Dict[str, Any], partial: bool = False) -> Dict[str, Any
             if not 1000 <= year <= 2100:
                 raise AdminError("publication_year must be between 1000 and 2100")
             cleaned[name] = year
+        elif name == "isbn":
+            text = " ".join(str(value or "").split())
+            if not text:
+                cleaned[name] = None
+                continue
+            isbn = page_labels.clean_isbn(text)
+            if isbn is None:
+                raise AdminError("isbn is not a valid ISBN-10 or ISBN-13 (check the digits)")
+            cleaned[name] = isbn
+        elif name == "page_offset":
+            if value in (None, ""):
+                cleaned[name] = None
+                continue
+            try:
+                offset = int(value)
+            except (TypeError, ValueError) as exc:
+                raise AdminError("page_offset must be a whole number") from exc
+            if not page_labels.MIN_OFFSET <= offset <= page_labels.MAX_OFFSET:
+                raise AdminError(f"page_offset must be between {page_labels.MIN_OFFSET} and {page_labels.MAX_OFFSET}")
+            cleaned[name] = offset
         else:
             text = " ".join(str(value or "").split())
             if len(text) > 500:

@@ -69,6 +69,7 @@ function normalizeResult(item: ApiResult): SearchResult {
         page: item.page ?? null,
         concepts: item.concepts ?? [],
         book_id: item.book_id ?? null,
+        printed_page: item.printed_page ?? null,
     }
 }
 
@@ -85,19 +86,27 @@ function normalizeResponse(payload: ApiResponse, query: string): SearchResponse 
     }
 }
 
-async function post(path: string, query: string, bookId?: number): Promise<Response> {
+/** A single book id, a list of book ids (a project's books), or undefined for the whole library. */
+export type SearchScope = number | number[] | undefined
+
+function scopeBody(scope: SearchScope): Record<string, unknown> {
+    if (Array.isArray(scope)) return { book_ids: scope }
+    return scope ? { book_id: scope } : {}
+}
+
+async function post(path: string, query: string, scope?: SearchScope): Promise<Response> {
     return fetch(path, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(bookId ? { query, book_id: bookId } : { query }),
+        body: JSON.stringify({ query, ...scopeBody(scope) }),
     })
 }
 
-/** Search the library, or (with `bookId`) only inside one book. */
-export async function searchRecords(query: string, bookId?: number): Promise<SearchResponse> {
+/** Search the library, or only inside one book or a set of books. */
+export async function searchRecords(query: string, scope?: SearchScope): Promise<SearchResponse> {
     try {
-        let response = await post('/api/search/rich', query, bookId)
-        if (response.status === 404 && !bookId) {
+        let response = await post('/api/search/rich', query, scope)
+        if (response.status === 404 && !scope) {
             // Older API without rich results: plain answers, laid out as a list.
             response = await post('/api/search', query)
         }

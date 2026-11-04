@@ -106,7 +106,7 @@ function App() {
               <ExplorerPage conceptId={route.page === 'explore' ? route.conceptId : null} active={route.page === 'explore'} />
             </div>
             <div hidden={route.page !== 'library'}>
-              <LibraryPage bookId={route.page === 'library' ? route.bookId : null} active={route.page === 'library'} />
+              <LibraryPage bookId={route.page === 'library' ? route.bookId : null} readPage={route.page === 'library' ? route.readPage : null} active={route.page === 'library'} />
             </div>
             {route.page === 'account' && <AccountPage />}
             {route.page === 'workspace' && <WorkspacePage tab={route.tab} id={route.id} />}

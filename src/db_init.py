@@ -160,6 +160,14 @@ CREATE TABLE IF NOT EXISTS concept_figures (
 );
 CREATE INDEX IF NOT EXISTS idx_concept_figures_concept ON concept_figures(concept_id);
 
+-- Citation details, and printed page numbers (src/page_labels.py). `page_offset`: printed page = PDF page - offset,
+-- set by an admin; `page_labels`: the PDF's own labels, read once (NULL = not read yet, [] = it has none).
+ALTER TABLE books ADD COLUMN IF NOT EXISTS publisher TEXT;
+ALTER TABLE books ADD COLUMN IF NOT EXISTS edition TEXT;
+ALTER TABLE books ADD COLUMN IF NOT EXISTS isbn TEXT;
+ALTER TABLE books ADD COLUMN IF NOT EXISTS page_offset INT;
+ALTER TABLE books ADD COLUMN IF NOT EXISTS page_labels JSONB;
+
 -- Scholar accounts and their workspace (src/accounts.py, src/workspace.py). Everything a scholar saves cascades away
 -- with the account.
 CREATE TABLE IF NOT EXISTS users (
@@ -239,6 +247,35 @@ CREATE TABLE IF NOT EXISTS user_activity (
     at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     PRIMARY KEY (owner_id, kind, ref)
 );
+
+-- Research projects (phase 2): a question, a set of books to search, and the evidence / notes gathered for it.
+CREATE TABLE IF NOT EXISTS projects (
+    id BIGSERIAL PRIMARY KEY,
+    owner_id INT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    title TEXT NOT NULL,
+    question TEXT NOT NULL DEFAULT '',
+    description TEXT NOT NULL DEFAULT '',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_projects_owner ON projects(owner_id, updated_at DESC);
+CREATE TABLE IF NOT EXISTS project_books (
+    project_id BIGINT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    book_id INT NOT NULL REFERENCES books(id) ON DELETE CASCADE,
+    added_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (project_id, book_id)
+);
+CREATE TABLE IF NOT EXISTS project_evidence (
+    project_id BIGINT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    evidence_id BIGINT NOT NULL REFERENCES evidence_items(id) ON DELETE CASCADE,
+    added_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (project_id, evidence_id)
+);
+CREATE INDEX IF NOT EXISTS idx_project_evidence_evidence ON project_evidence(evidence_id);
+ALTER TABLE notes ADD COLUMN IF NOT EXISTS project_id BIGINT REFERENCES projects(id) ON DELETE SET NULL;
+CREATE INDEX IF NOT EXISTS idx_notes_project ON notes(project_id);
+-- Where the scholar stopped reading a book (the reader resumes there).
+ALTER TABLE user_activity ADD COLUMN IF NOT EXISTS page_number INT;
 """
 
 

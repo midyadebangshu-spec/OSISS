@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react'
-import { BookOpen, Clock, FolderOpen, NotebookPen, Search } from 'lucide-react'
+import { BookOpen, Clock, FolderKanban, FolderOpen, NotebookPen, Search } from 'lucide-react'
 import { getDashboard } from '../../lib/workspaceApi'
-import { libraryHref, workspaceHref } from '../../lib/route'
+import { readerHref, workspaceHref } from '../../lib/route'
+import { libraryHref } from '../../lib/route'
 import type { Dashboard } from '../../types/workspace'
 import { EvidenceCard } from './EvidenceCard'
 
@@ -45,8 +46,8 @@ export function DashboardView() {
                         <ul className="space-y-2 text-sm">
                             {data.continue_reading.map((book) => (
                                 <li key={book.book_id}>
-                                    <a href={libraryHref(book.book_id)} className="font-medium underline-offset-4 hover:underline">{book.title}</a>
-                                    {book.author && <span className="text-zinc-600"> · {book.author}</span>}
+                                    <a href={book.page_number ? readerHref(book.book_id, book.page_number) : libraryHref(book.book_id)} className="font-medium underline-offset-4 hover:underline">{book.title}</a>
+                                    {book.page_number && <span className="text-zinc-600"> · resume at PDF page {book.page_number}</span>}
                                 </li>
                             ))}
                         </ul>
@@ -57,6 +58,15 @@ export function DashboardView() {
                         <ul className="space-y-1 text-sm">
                             {data.recent_searches.map((search) => (
                                 <li key={search.query} className="flex items-center gap-2"><Clock className="h-3.5 w-3.5 shrink-0 text-zinc-400" /><span className="truncate">{search.query}</span></li>
+                            ))}
+                        </ul>
+                    )}
+                </Panel>
+                <Panel title="Projects" icon={<FolderKanban className="h-4 w-4" />}>
+                    {data.projects.length === 0 ? EMPTY : (
+                        <ul className="space-y-1 text-sm">
+                            {data.projects.map((project) => (
+                                <li key={project.id}><a href={workspaceHref('projects', project.id)} className="underline-offset-4 hover:underline">{project.title}</a> <span className="text-zinc-500">({project.book_count} books)</span></li>
                             ))}
                         </ul>
                     )}

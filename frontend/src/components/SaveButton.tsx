@@ -2,18 +2,20 @@ import { useEffect, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
 import { Bookmark, BookmarkCheck, Check, Plus } from 'lucide-react'
 import { useAuth } from '../lib/auth'
-import { addToCollection, createCollection, listCollections, saveEvidence } from '../lib/workspaceApi'
-import type { Collection, Evidence, EvidenceDraft } from '../types/workspace'
+import { addToCollection, attachToProject, createCollection, listCollections, listProjects, saveEvidence } from '../lib/workspaceApi'
+import type { Collection, Evidence, EvidenceDraft, Project } from '../types/workspace'
 
 /**
  * "Save" for a piece of evidence: saves it to the signed-in scholar's workspace and optionally files it in a
  * collection. Signed-out visitors get a link to sign in instead.
  */
-export function SaveButton({ draft, label = 'Save' }: { draft: EvidenceDraft; label?: string }) {
+export function SaveButton({ draft, label = 'Save', onSaved }: { draft: EvidenceDraft; label?: string; onSaved?: (item: Evidence) => void }) {
     const { user } = useAuth()
     const box = useRef<HTMLDivElement>(null)
     const [open, setOpen] = useState(false)
     const [collections, setCollections] = useState<Collection[]>([])
+    const [projects, setProjects] = useState<Project[]>([])
+    const [attached, setAttached] = useState<number[]>([])
     const [item, setItem] = useState<Evidence | null>(null)
     const [newName, setNewName] = useState('')
     const [busy, setBusy] = useState(false)
@@ -44,7 +46,12 @@ export function SaveButton({ draft, label = 'Save' }: { draft: EvidenceDraft; la
         )
     }
 
-    const ensureSaved = async (): Promise<Evidence> => item ?? saveEvidence(draft)
+    const ensureSaved = async (): Promise<Evidence> => {
+        if (item) return item
+        const saved = await saveEvidence(draft)
+        onSaved?.(saved)
+        return saved
+    }
 
     const run = async (action: (saved: Evidence) => Promise<Evidence | void>) => {
         setBusy(true)
@@ -67,6 +74,9 @@ export function SaveButton({ draft, label = 'Save' }: { draft: EvidenceDraft; la
             listCollections()
                 .then(setCollections)
                 .catch(() => setError('Could not load your collections.'))
+            listProjects()
+                .then(setProjects)
+                .catch(() => undefined)
         }
     }
 
@@ -77,6 +87,15 @@ export function SaveButton({ draft, label = 'Save' }: { draft: EvidenceDraft; la
             await addToCollection(collection.id, saved.id)
             setCollections((all) => all.map((c) => (c.id === collection.id ? { ...c, item_count: c.item_count + 1 } : c)))
             return { ...saved, collection_ids: [...new Set([...saved.collection_ids, collection.id])] }
+        })
+
+    const inProject = (project: Project) => attached.includes(project.id)
+
+    const attach = (project: Project) =>
+        run(async (saved) => {
+            await attachToProject(project.id, saved.id)
+            setAttached((all) => [...all, project.id])
+            setProjects((all) => all.map((p) => (p.id === project.id ? { ...p, evidence_count: p.evidence_count + 1 } : p)))
         })
 
     const createAndFile = async (event: FormEvent) => {
@@ -121,6 +140,22 @@ export function SaveButton({ draft, label = 'Save' }: { draft: EvidenceDraft; la
                                 >
                                     <span className="truncate">{collection.name}</span>
                                     {inCollection(collection) ? <Check className="h-4 w-4 shrink-0" /> : <span className="text-xs text-zinc-500">{collection.item_count}</span>}
+                                </button>
+                            </li>
+                        ))}
+                    </ul>
+                    {projects.length > 0 && <p className="mb-1 mt-3 text-xs uppercase tracking-[0.14em] text-zinc-500">Add to project</p>}
+                    <ul className="max-h-32 space-y-1 overflow-y-auto">
+                        {projects.map((project) => (
+                            <li key={project.id}>
+                                <button
+                                    type="button"
+                                    disabled={busy || Boolean(inProject(project))}
+                                    onClick={() => void attach(project)}
+                                    className="flex w-full items-center justify-between px-2 py-1 text-left hover:bg-zinc-100 disabled:opacity-60"
+                                >
+                                    <span className="truncate">{project.title}</span>
+                                    {inProject(project) ? <Check className="h-4 w-4 shrink-0" /> : <span className="text-xs text-zinc-500">{project.evidence_count}</span>}
                                 </button>
                             </li>
                         ))}

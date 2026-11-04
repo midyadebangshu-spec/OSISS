@@ -14,7 +14,7 @@ from urllib.parse import urlparse
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from starlette.concurrency import run_in_threadpool
 
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -29,6 +29,7 @@ import layout
 import library_api
 import load_control
 import page_assets
+import page_labels
 import replica
 import runtime_config
 import workspace_api
@@ -276,6 +277,15 @@ class SearchRequest(BaseModel):
     top_k: Optional[int] = Field(default=None, ge=1, le=10)
     # Search inside one book (the library's "search in this book").
     book_id: Optional[int] = Field(default=None, ge=1)
+    # Search inside several books (a research project's books). Combined with book_id if both are given.
+    book_ids: Optional[List[int]] = Field(default=None, min_length=1, max_length=200)
+
+    @field_validator("book_ids")
+    @classmethod
+    def _positive_ids(cls, value):
+        if value is not None and any(item < 1 for item in value):
+            raise ValueError("book_ids must be positive")
+        return value
 
 
 class SearchResultItem(BaseModel):
@@ -311,6 +321,8 @@ class RichResultItem(SearchResultItem):
     concepts: List[Dict[str, Any]] = Field(default_factory=list)
     # The book's library page id (the plain /api/search contract stays without it).
     book_id: Optional[int] = None
+    # The number printed on the page when it differs from the PDF position (page_number), e.g. "233" or "xii".
+    printed_page: Optional[str] = None
 
 
 class LayoutInfo(BaseModel):
@@ -382,17 +394,24 @@ async def run_search(payload: SearchRequest, request: Request):
 
     started = time.perf_counter()
     # A book-scoped search is a different question: the book is part of the cache key.
-    scope = payload.top_k if payload.book_id is None else (payload.top_k, "book", payload.book_id)
+    scope_ids = tuple(sorted({*(payload.book_ids or ()), *(() if payload.book_id is None else (payload.book_id,))}))
+    if not scope_ids:
+        scope = payload.top_k
+    elif payload.book_ids is None:
+        scope = (payload.top_k, "book", payload.book_id)  # the single-book key, unchanged
+    else:
+        scope = (payload.top_k, "books", scope_ids)
     cache_key = load_control.cache.key(payload.query, scope)
     result = load_control.cache.get(cache_key)
     cached = result is not None
     timings: Dict[str, float] = {}
     if not cached:
         try:
+            scope_args = {"book_id": payload.book_id}
+            if payload.book_ids is not None:
+                scope_args["book_ids"] = payload.book_ids
             result = await load_control.gate().run(
-                lambda: run_in_threadpool(
-                    search_and_extract, payload.query, payload.top_k, timings=timings, book_id=payload.book_id
-                )
+                lambda: run_in_threadpool(search_and_extract, payload.query, payload.top_k, timings=timings, **scope_args)
             )
         except load_control.Busy as exc:
             return refuse(503, str(exc), exc.retry_after)
@@ -429,6 +448,27 @@ def book_hashes(file_paths: List[str]) -> Dict[str, str]:
     return {path: file_hash for path, file_hash in rows if file_hash}
 
 
+def printed_pages(items: List[Dict[str, Any]]) -> List[Optional[str]]:
+    """Printed page label per result (None where unknown), from the page offset / PDF labels kept in `books`."""
+    paths = sorted({item.get("source", {}).get("file_path") for item in items if item.get("source", {}).get("file_path")})
+    if not paths:
+        return [None] * len(items)
+    try:
+        with db() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute("SELECT file_path, page_offset, page_labels FROM books WHERE file_path = ANY(%s)", (paths,))
+                info = {path: (offset, labels or None) for path, offset, labels in cursor.fetchall()}
+    except Exception as exc:  # pylint: disable=broad-except
+        print(f"[OSISS] Printed page numbers unavailable: {exc}")
+        return [None] * len(items)
+    result = []
+    for item in items:
+        source = item.get("source", {})
+        offset, labels = info.get(source.get("file_path"), (None, None))
+        result.append(page_labels.printed_label(source.get("page_number") or 0, offset, labels))
+    return result
+
+
 def enrich(query: str, items: List[Dict[str, Any]]) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
     if not settings.page_assets:
         return layout.enrich_results(query, items, {}, None, page_assets.asset_url)
@@ -453,11 +493,13 @@ async def api_search_rich(payload: SearchRequest, request: Request):
             for item in items
         ]
     )
+    labels = await run_in_threadpool(printed_pages, items)
     results = [
         RichResultItem(
-            **map_result(item).model_dump(), **extra, concepts=found, book_id=item.get("source", {}).get("book_id")
+            **map_result(item).model_dump(), **extra, concepts=found, book_id=item.get("source", {}).get("book_id"),
+            printed_page=label,
         )
-        for item, extra, found in zip(items, rich, named)
+        for item, extra, found, label in zip(items, rich, named, labels)
     ]
     return RichSearchResponse(query=query, layout=LayoutInfo(**layout_info), results=results)
 

@@ -1,13 +1,15 @@
-import { FolderOpen, LayoutDashboard, NotebookPen } from 'lucide-react'
+import { FolderKanban, FolderOpen, LayoutDashboard, NotebookPen } from 'lucide-react'
 import { useAuth } from '../lib/auth'
 import { workspaceHref } from '../lib/route'
 import type { WorkspaceTab } from '../lib/route'
 import { CollectionsView } from '../components/workspace/CollectionsView'
 import { DashboardView } from '../components/workspace/DashboardView'
 import { NotesView } from '../components/workspace/NotesView'
+import { ProjectsView } from '../components/workspace/ProjectsView'
 
 const TABS: { tab: WorkspaceTab; label: string; icon: React.ReactNode }[] = [
     { tab: 'dashboard', label: 'Dashboard', icon: <LayoutDashboard className="h-4 w-4" /> },
+    { tab: 'projects', label: 'Projects', icon: <FolderKanban className="h-4 w-4" /> },
     { tab: 'collections', label: 'Collections', icon: <FolderOpen className="h-4 w-4" /> },
     { tab: 'notes', label: 'Notes', icon: <NotebookPen className="h-4 w-4" /> },
 ]
@@ -42,6 +44,7 @@ export function WorkspacePage({ tab, id }: { tab: WorkspaceTab; id: number | nul
                 ))}
             </nav>
             {tab === 'dashboard' && <DashboardView />}
+            {tab === 'projects' && <ProjectsView id={id} />}
             {tab === 'collections' && <CollectionsView id={id} />}
             {tab === 'notes' && <NotesView id={id} />}
         </section>

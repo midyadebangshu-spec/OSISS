@@ -58,6 +58,8 @@ export type SearchResult = {
     concepts: { id: number; label: string; book_count: number }[]
     /** The book's library page (rich results only). */
     book_id?: number | null
+    /** The number printed on the page when it differs from page_number (the PDF position). */
+    printed_page?: string | null
 }
 
 export type LayoutKind = 'answer' | 'visual' | 'table' | 'compare' | 'steps' | 'empty'

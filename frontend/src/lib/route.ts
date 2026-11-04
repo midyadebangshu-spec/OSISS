@@ -4,19 +4,26 @@ import { useEffect, useState } from 'react'
 export type Route =
     | { page: 'search' }
     | { page: 'explore'; conceptId: number | null }
-    | { page: 'library'; bookId: number | null }
+    | { page: 'library'; bookId: number | null; readPage: number | null }
     | { page: 'account' }
     | { page: 'workspace'; tab: WorkspaceTab; id: number | null }
 
-export type WorkspaceTab = 'dashboard' | 'collections' | 'notes'
+export type WorkspaceTab = 'dashboard' | 'projects' | 'collections' | 'notes'
 
 export function parseHash(hash: string): Route {
     const explore = /^#\/explore(?:\/(\d+))?\/?$/.exec(hash)
     if (explore) return { page: 'explore', conceptId: explore[1] ? Number(explore[1]) : null }
-    const library = /^#\/library(?:\/(\d+))?\/?$/.exec(hash)
-    if (library) return { page: 'library', bookId: library[1] ? Number(library[1]) : null }
+    const library = /^#\/library(?:\/(\d+)(?:\/read(?:\/(\d+))?)?)?\/?$/.exec(hash)
+    if (library) {
+        const reading = /\/read/.test(hash)
+        return {
+            page: 'library',
+            bookId: library[1] ? Number(library[1]) : null,
+            readPage: reading ? Number(library[2] ?? 1) : null,
+        }
+    }
     if (/^#\/account\/?$/.test(hash)) return { page: 'account' }
-    const workspace = /^#\/workspace(?:\/(collections|notes)(?:\/(\d+))?)?\/?$/.exec(hash)
+    const workspace = /^#\/workspace(?:\/(projects|collections|notes)(?:\/(\d+))?)?\/?$/.exec(hash)
     if (workspace) {
         return { page: 'workspace', tab: (workspace[1] as WorkspaceTab | undefined) ?? 'dashboard', id: workspace[2] ? Number(workspace[2]) : null }
     }
@@ -30,6 +37,11 @@ export function workspaceHref(tab: WorkspaceTab = 'dashboard', id?: number | nul
 
 export function libraryHref(bookId?: number | null): string {
     return bookId ? `#/library/${bookId}` : '#/library'
+}
+
+/** The reader, opened at a PDF page (1 when omitted). */
+export function readerHref(bookId: number, page = 1): string {
+    return `#/library/${bookId}/read/${page}`
 }
 
 export function exploreHref(conceptId?: number | null): string {

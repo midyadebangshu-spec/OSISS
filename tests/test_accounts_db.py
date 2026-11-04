@@ -95,7 +95,8 @@ def clean(database):
         cursor.execute("TRUNCATE users, user_login_failures RESTART IDENTITY CASCADE")
         cursor.execute("TRUNCATE books RESTART IDENTITY CASCADE")
         cursor.execute(
-            "INSERT INTO books (title, author, file_path) VALUES ('Data Structures', 'A. Author', './ds.pdf')"
+            "INSERT INTO books (title, author, file_path) VALUES ('Data Structures', 'A. Author', './ds.pdf'), "
+            "('Algorithms', 'B. Author', './algo.pdf')"
         )
     return database
 
@@ -337,3 +338,121 @@ def test_admin_reset_disable_and_delete(app, clean):
         cursor.execute("SELECT (SELECT COUNT(*) FROM users), (SELECT COUNT(*) FROM evidence_items), (SELECT COUNT(*) FROM user_sessions)")
         assert cursor.fetchone() == (0, 0, 0)
     assert TestClient(app).delete(f"/api/admin/users/{user_id}", headers=ADMIN).status_code == 404
+
+
+def test_projects_books_evidence_and_notes(app):
+    client = scholar(app)
+    project = client.post(
+        "/api/workspace/projects", json={"title": "Sorting", "question": "Which sort is stable?", "book_ids": [2, 1, 1]}
+    ).json()
+    assert [b["title"] for b in project["books"]] == ["Algorithms", "Data Structures"] and project["book_count"] == 2
+    assert client.post("/api/workspace/projects", json={"title": " "}).status_code == 400
+    assert client.post("/api/workspace/projects", json={"title": "X", "book_ids": [99]}).status_code == 404
+
+    pid = project["id"]
+    assert client.post(f"/api/workspace/projects/{pid}/books", json={"book_ids": [99]}).status_code == 404
+    assert client.post(f"/api/workspace/projects/{pid}/books", json={"book_ids": []}).status_code == 422
+    assert client.delete(f"/api/workspace/projects/{pid}/books/2").status_code == 200
+    assert client.delete(f"/api/workspace/projects/{pid}/books/2").status_code == 404
+    assert client.post(f"/api/workspace/projects/{pid}/books", json={"book_ids": [2]}).json()["book_count"] == 2
+
+    item = client.post("/api/workspace/evidence", json={**PASSAGE, "project_id": pid}).json()
+    other = client.post("/api/workspace/evidence", json={**PASSAGE, "quote": "Not in the project."}).json()
+    assert client.put(f"/api/workspace/projects/{pid}/evidence/{other['id']}").status_code == 200
+    assert client.put(f"/api/workspace/projects/{pid}/evidence/{other['id']}").status_code == 200  # idempotent
+    assert client.delete(f"/api/workspace/projects/{pid}/evidence/{other['id']}").status_code == 200
+    assert client.post("/api/workspace/evidence", json={**PASSAGE, "project_id": 999}).status_code == 404
+    note = client.post("/api/workspace/notes", json={"title": "Plan", "body": "Compare [[merge sort]]", "project_id": pid}).json()
+    assert note["project_id"] == pid
+    client.post("/api/workspace/notes", json={"title": "Elsewhere"})
+    assert [n["id"] for n in client.get(f"/api/workspace/notes?project_id={pid}").json()["notes"]] == [note["id"]]
+    assert client.post("/api/workspace/notes", json={"title": "x", "project_id": 999}).status_code == 404
+
+    detail = client.get(f"/api/workspace/projects/{pid}").json()
+    assert [e["id"] for e in detail["evidence"]] == [item["id"]] and [n["id"] for n in detail["notes"]] == [note["id"]]
+    assert detail["evidence_count"] == 1 and detail["note_count"] == 1
+    assert client.patch(f"/api/workspace/projects/{pid}", json={"question": "Which is fastest?"}).json()["question"] == "Which is fastest?"
+    assert client.get("/api/workspace/dashboard").json()["projects"][0]["id"] == pid
+    export = client.get("/api/workspace/export").json()
+    assert export["projects"][0]["book_ids"] == [1, 2] and export["projects"][0]["evidence_ids"] == [item["id"]]
+
+    assert client.delete(f"/api/workspace/projects/{pid}").status_code == 200  # items and notes survive
+    assert client.get("/api/workspace/evidence").json()["total"] == 2
+    assert client.get(f"/api/workspace/notes/{note['id']}").json()["project_id"] is None
+
+
+def test_projects_are_private(app):
+    ada, bob = scholar(app), scholar(app, "bob@example.edu")
+    pid = ada.post("/api/workspace/projects", json={"title": "Mine", "book_ids": [1]}).json()["id"]
+    item = ada.post("/api/workspace/evidence", json=PASSAGE).json()
+    assert bob.get("/api/workspace/projects").json()["projects"] == []
+    assert bob.get(f"/api/workspace/projects/{pid}").status_code == 404
+    assert bob.patch(f"/api/workspace/projects/{pid}", json={"title": "Hijack"}).status_code == 404
+    assert bob.delete(f"/api/workspace/projects/{pid}").status_code == 404
+    assert bob.post(f"/api/workspace/projects/{pid}/books", json={"book_ids": [2]}).status_code == 404
+    assert bob.delete(f"/api/workspace/projects/{pid}/books/1").status_code == 404
+    assert bob.put(f"/api/workspace/projects/{pid}/evidence/{item['id']}").status_code == 404
+    mine = bob.post("/api/workspace/projects", json={"title": "Bob's"}).json()["id"]
+    assert bob.put(f"/api/workspace/projects/{mine}/evidence/{item['id']}").status_code == 404  # her item
+    assert bob.post("/api/workspace/notes", json={"body": "x", "project_id": pid}).status_code == 404
+    assert bob.post("/api/workspace/evidence", json={**PASSAGE, "project_id": pid}).status_code == 404
+    assert ada.get(f"/api/workspace/projects/{pid}").json()["title"] == "Mine"
+
+
+def test_highlights(app):
+    client = scholar(app)
+    rects = [[0.1, 0.2, 0.5, 0.23], [0.1, 0.24, 0.3, 0.27]]
+    saved = client.post(
+        "/api/workspace/evidence",
+        json={"kind": "highlight", "book_id": 1, "page_number": 12, "quote": "A stack is LIFO", "meta": {"rects": rects}},
+    ).json()
+    assert saved["kind"] == "highlight" and saved["meta"] == {"rects": rects} and saved["book_title"] == "Data Structures"
+    again = client.post(
+        "/api/workspace/evidence",
+        json={"kind": "highlight", "book_id": 1, "page_number": 12, "quote": "A stack is LIFO", "meta": {"rects": rects}},
+    ).json()
+    assert again["id"] == saved["id"]
+    elsewhere = client.post(
+        "/api/workspace/evidence",
+        json={"kind": "highlight", "book_id": 1, "page_number": 12, "quote": "A stack is LIFO", "meta": {"rects": [[0.1, 0.6, 0.4, 0.63]]}},
+    ).json()
+    assert elsewhere["id"] != saved["id"]  # the same words highlighted at another place is another highlight
+
+    for bad in (
+        {"rects": []}, {"rects": [[0.5, 0.2, 0.1, 0.3]]}, {"rects": [[0, 0, 2, 1]]}, {"rects": [[0, 0, 1]]},
+        {"rects": [[0.1, 0.1, 0.2, 0.2]] * 61}, {},
+    ):
+        response = client.post(
+            "/api/workspace/evidence",
+            json={"kind": "highlight", "book_id": 1, "page_number": 3, "quote": "x", "meta": bad},
+        )
+        assert response.status_code == 400, bad
+    assert client.post("/api/workspace/evidence", json={"kind": "highlight", "book_id": 1, "quote": "x", "meta": {"rects": rects}}).status_code == 400
+
+    client.post("/api/workspace/evidence", json={**PASSAGE, "page_number": 12})
+    on_page = client.get("/api/workspace/evidence?kind=highlight&book_id=1&page_number=12").json()
+    assert on_page["total"] == 2 and {h["id"] for h in on_page["items"]} == {saved["id"], elsewhere["id"]}
+    assert client.get("/api/workspace/evidence?kind=highlight&book_id=1&page_number=13").json()["total"] == 0
+    assert client.get("/api/workspace/evidence?kind=highlight&book_id=2").json()["total"] == 0
+
+
+def test_reading_progress_is_remembered(app):
+    client = scholar(app)
+    client.post("/api/workspace/activity", json={"kind": "book", "ref": "1", "book_id": 1, "page_number": 40})
+    client.post("/api/workspace/activity", json={"kind": "book", "ref": "1", "book_id": 1})  # opening it elsewhere keeps the page
+    assert client.get("/api/workspace/dashboard").json()["continue_reading"][0]["page_number"] == 40
+    client.post("/api/workspace/activity", json={"kind": "book", "ref": "1", "book_id": 1, "page_number": 41})
+    assert client.get("/api/workspace/dashboard").json()["continue_reading"][0]["page_number"] == 41
+    assert client.post("/api/workspace/activity", json={"kind": "book", "ref": "1", "book_id": 1, "page_number": 0}).status_code == 422
+
+
+def test_saved_items_carry_the_printed_page(app, clean):
+    client = scholar(app)
+    item = client.post("/api/workspace/evidence", json=PASSAGE).json()
+    assert item["printed_page"] is None  # nothing known about this book's numbering
+    with clean, clean.cursor() as cursor:
+        cursor.execute("UPDATE books SET page_offset = 2 WHERE id = 1")
+    assert client.get("/api/workspace/evidence").json()["items"][0]["printed_page"] == "10"  # PDF page 12
+    assert client.get("/api/workspace/dashboard").json()["recent_evidence"][0]["printed_page"] == "10"
+    concept = client.post("/api/workspace/evidence", json={"kind": "concept", "concept_key": "stack"}).json()
+    assert concept["printed_page"] is None

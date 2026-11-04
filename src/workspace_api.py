@@ -5,7 +5,7 @@ Every route needs a signed-in scholar (`current_user`) and only sees that schola
 
 from __future__ import annotations
 
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
@@ -36,6 +36,7 @@ class EvidenceIn(BaseModel):
     concept_key: Optional[str] = Field(default=None, max_length=200)
     meta: Dict[str, Any] = Field(default_factory=dict)
     collection_id: Optional[int] = None  # also put the new item into this collection
+    project_id: Optional[int] = None  # and/or attach it to this project
 
 
 class CollectionIn(BaseModel):
@@ -47,6 +48,7 @@ class NoteIn(BaseModel):
     title: Optional[str] = Field(default=None, max_length=400)
     body: Optional[str] = Field(default=None, max_length=workspace.MAX_NOTE * 2)
     evidence_id: Optional[int] = None
+    project_id: Optional[int] = None
 
 
 class ActivityIn(BaseModel):
@@ -54,6 +56,18 @@ class ActivityIn(BaseModel):
     ref: str = Field(max_length=300)
     label: str = Field(default="", max_length=300)
     book_id: Optional[int] = None
+    page_number: Optional[int] = Field(default=None, ge=1)
+
+
+class ProjectIn(BaseModel):
+    title: Optional[str] = Field(default=None, max_length=400)
+    question: Optional[str] = Field(default=None, max_length=2000)
+    description: Optional[str] = Field(default=None, max_length=8000)
+    book_ids: List[int] = Field(default_factory=list, max_length=200)
+
+
+class BookIds(BaseModel):
+    book_ids: List[int] = Field(min_length=1, max_length=200)
 
 
 @router.get("/dashboard")
@@ -66,7 +80,9 @@ def dashboard(user: User = Depends(current_user)):
 def record_activity(payload: ActivityIn, user: User = Depends(current_user)):
     try:
         with db() as connection:
-            workspace.record_activity(connection, user["id"], payload.kind, payload.ref, payload.label, payload.book_id)
+            workspace.record_activity(
+                connection, user["id"], payload.kind, payload.ref, payload.label, payload.book_id, payload.page_number
+            )
             connection.commit()
     except workspace.WorkspaceError as exc:
         _fail(exc)
@@ -80,11 +96,16 @@ def record_activity(payload: ActivityIn, user: User = Depends(current_user)):
 def save_evidence(payload: EvidenceIn, user: User = Depends(current_user)):
     try:
         with db() as connection:
-            item = workspace.save_evidence(connection, user["id"], payload.model_dump(exclude={"collection_id"}))
+            item = workspace.save_evidence(
+                connection, user["id"], payload.model_dump(exclude={"collection_id", "project_id"})
+            )
             if payload.collection_id is not None:
                 if not workspace.add_to_collection(connection, user["id"], payload.collection_id, item["id"]):
                     raise HTTPException(404, "Unknown collection.")
-                item = workspace.get_evidence(connection, user["id"], item["id"])
+            if payload.project_id is not None:
+                if not workspace.attach_evidence(connection, user["id"], payload.project_id, item["id"]):
+                    raise HTTPException(404, "Unknown project.")
+            item = workspace.get_evidence(connection, user["id"], item["id"])
             connection.commit()
     except workspace.WorkspaceError as exc:
         _fail(exc)
@@ -94,6 +115,9 @@ def save_evidence(payload: EvidenceIn, user: User = Depends(current_user)):
 @router.get("/evidence")
 def list_evidence(
     collection_id: Optional[int] = None,
+    project_id: Optional[int] = None,
+    book_id: Optional[int] = None,
+    page_number: Optional[int] = None,
     kind: Optional[str] = None,
     q: Optional[str] = Query(default=None, max_length=200),
     limit: int = Query(default=50, ge=1, le=200),
@@ -101,7 +125,9 @@ def list_evidence(
     user: User = Depends(current_user),
 ):
     with db() as connection:
-        return workspace.list_evidence(connection, user["id"], collection_id, kind, q, limit, offset)
+        return workspace.list_evidence(
+            connection, user["id"], collection_id, kind, q, limit, offset, project_id, book_id, page_number
+        )
 
 
 @router.delete("/evidence/{evidence_id}")
@@ -184,12 +210,13 @@ def remove_from_collection(collection_id: int, evidence_id: int, user: User = De
 def list_notes(
     q: Optional[str] = Query(default=None, max_length=200),
     concept: Optional[str] = Query(default=None, max_length=120),
+    project_id: Optional[int] = None,
     limit: int = Query(default=50, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
     user: User = Depends(current_user),
 ):
     with db() as connection:
-        return {"notes": workspace.list_notes(connection, user["id"], q, concept, limit, offset)}
+        return {"notes": workspace.list_notes(connection, user["id"], q, concept, limit, offset, project_id)}
 
 
 @router.post("/notes")
@@ -197,7 +224,7 @@ def create_note(payload: NoteIn, user: User = Depends(current_user)):
     try:
         with db() as connection:
             note = workspace.create_note(
-                connection, user["id"], payload.title or "", payload.body or "", payload.evidence_id
+                connection, user["id"], payload.title or "", payload.body or "", payload.evidence_id, payload.project_id
             )
             connection.commit()
     except workspace.WorkspaceError as exc:
@@ -226,6 +253,93 @@ def update_note(note_id: int, payload: NoteIn, user: User = Depends(current_user
 def delete_note(note_id: int, user: User = Depends(current_user)):
     with db() as connection:
         _found(workspace.delete_note(connection, user["id"], note_id))
+        connection.commit()
+    return {"ok": True}
+
+
+# --- projects -----------------------------------------------------------------------------------------------------
+
+
+@router.get("/projects")
+def list_projects(user: User = Depends(current_user)):
+    with db() as connection:
+        return {"projects": workspace.list_projects(connection, user["id"])}
+
+
+@router.post("/projects")
+def create_project(payload: ProjectIn, user: User = Depends(current_user)):
+    try:
+        with db() as connection:
+            project = workspace.create_project(
+                connection, user["id"], payload.title or "", payload.question or "", payload.description or "",
+                payload.book_ids,
+            )
+            connection.commit()
+    except workspace.WorkspaceError as exc:
+        _fail(exc)
+    return project
+
+
+@router.get("/projects/{project_id}")
+def get_project(project_id: int, user: User = Depends(current_user)):
+    with db() as connection:
+        return _found(workspace.get_project(connection, user["id"], project_id))
+
+
+@router.patch("/projects/{project_id}")
+def update_project(project_id: int, payload: ProjectIn, user: User = Depends(current_user)):
+    try:
+        with db() as connection:
+            project = _found(
+                workspace.update_project(
+                    connection, user["id"], project_id, payload.title, payload.question, payload.description
+                )
+            )
+            connection.commit()
+    except workspace.WorkspaceError as exc:
+        _fail(exc)
+    return project
+
+
+@router.delete("/projects/{project_id}")
+def delete_project(project_id: int, user: User = Depends(current_user)):
+    with db() as connection:
+        _found(workspace.delete_project(connection, user["id"], project_id))
+        connection.commit()
+    return {"ok": True}
+
+
+@router.post("/projects/{project_id}/books")
+def add_project_books(project_id: int, payload: BookIds, user: User = Depends(current_user)):
+    try:
+        with db() as connection:
+            _found(workspace.add_project_books(connection, user["id"], project_id, payload.book_ids))
+            connection.commit()
+            return workspace.get_project(connection, user["id"], project_id)
+    except workspace.WorkspaceError as exc:
+        _fail(exc)
+
+
+@router.delete("/projects/{project_id}/books/{book_id}")
+def remove_project_book(project_id: int, book_id: int, user: User = Depends(current_user)):
+    with db() as connection:
+        _found(workspace.remove_project_book(connection, user["id"], project_id, book_id))
+        connection.commit()
+    return {"ok": True}
+
+
+@router.put("/projects/{project_id}/evidence/{evidence_id}")
+def attach_evidence(project_id: int, evidence_id: int, user: User = Depends(current_user)):
+    with db() as connection:
+        _found(workspace.attach_evidence(connection, user["id"], project_id, evidence_id))
+        connection.commit()
+    return {"ok": True}
+
+
+@router.delete("/projects/{project_id}/evidence/{evidence_id}")
+def detach_evidence(project_id: int, evidence_id: int, user: User = Depends(current_user)):
+    with db() as connection:
+        _found(workspace.detach_evidence(connection, user["id"], project_id, evidence_id))
         connection.commit()
     return {"ok": True}
 

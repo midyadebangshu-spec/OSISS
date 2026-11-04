@@ -18,6 +18,7 @@ import fitz
 
 import admin
 import page_assets
+import page_labels
 from config import settings
 
 MAX_TOC_ENTRIES = 400
@@ -38,7 +39,7 @@ def _read_pdf_facts(file_path: str) -> Dict[str, Any]:
                 for level, title, page in pdf.get_toc(simple=True)[:MAX_TOC_ENTRIES]
                 if title.strip() and page and page > 0
             ]
-            return {"page_count": pdf.page_count, "toc": toc}
+            return {"page_count": pdf.page_count, "toc": toc, "labels": page_labels.read_pdf_labels(pdf)}
 
 
 def _read_asset_facts(file_hash: str) -> Dict[str, Any]:
@@ -67,7 +68,7 @@ def book_facts(file_path: str, file_hash: Optional[str]) -> Dict[str, Any]:
         cached = _file_facts.get(key)
     if cached is not None and time.monotonic() - cached[0] < FACTS_TTL_SECONDS:
         return cached[1]
-    facts: Dict[str, Any] = {"page_count": None, "toc": [], "figure_count": 0, "table_count": 0, "figures": [], "built_pages": 0}
+    facts: Dict[str, Any] = {"page_count": None, "toc": [], "labels": None, "figure_count": 0, "table_count": 0, "figures": [], "built_pages": 0}
     try:
         facts.update(_read_pdf_facts(file_path))
     except Exception as exc:  # pylint: disable=broad-except
@@ -106,13 +107,15 @@ def _cover(file_hash: Optional[str]) -> Optional[str]:
 BOOK_SQL = """
 SELECT b.id, b.title, b.author, b.department, b.publication_year, b.language_code, b.file_path, b.file_hash,
        b.created_at, COUNT(c.id) AS chunk_count,
-       (SELECT COUNT(DISTINCT m.concept_id) FROM concept_mentions m WHERE m.book_id = b.id) AS concept_count
+       (SELECT COUNT(DISTINCT m.concept_id) FROM concept_mentions m WHERE m.book_id = b.id) AS concept_count,
+       b.publisher, b.edition, b.isbn, b.page_offset
 FROM books b LEFT JOIN chunks c ON c.book_id = b.id
 """
 
 
 def _row_to_book(row) -> Dict[str, Any]:
-    book_id, title, author, department, year, language, file_path, file_hash, created_at, chunks, concepts = row
+    (book_id, title, author, department, year, language, file_path, file_hash, created_at, chunks, concepts,
+     publisher, edition, isbn, page_offset) = row
     facts = book_facts(file_path, file_hash)
     return {
         "id": book_id,
@@ -120,6 +123,10 @@ def _row_to_book(row) -> Dict[str, Any]:
         "author": author,
         "department": department,
         "publication_year": year,
+        "publisher": publisher,
+        "edition": edition,
+        "isbn": isbn,
+        "page_offset": page_offset,
         "language": language,
         "pdf_link": admin.pdf_link(file_path or "") or "#",
         "cover": _cover(file_hash),
@@ -163,6 +170,7 @@ def get_book(connection, book_id: int, figure_limit: int = 24, concept_limit: in
     file_path, file_hash = row[6], row[7]
     facts = book_facts(file_path, file_hash)
     book["toc"] = facts["toc"]
+    book["has_page_labels"] = bool(book_label_info(connection, book_id)[1])
     book["concepts"] = concepts
     book["figures"] = [
         {
@@ -201,3 +209,102 @@ def book_pages(connection, book_id: int, start: int, count: int) -> Optional[Dic
             exists = os.path.isfile(os.path.join(page_assets.book_dir(file_hash), f"p{number}.webp"))
             pages.append({"page": number, "image": page_assets.asset_url(file_hash, f"p{number}.webp") if exists else None})
     return {"book_id": book_id, "page_count": total, "start": start, "pages": pages}
+
+
+# --- printed page numbers -------------------------------------------------------------------------------------------
+
+
+def book_label_info(connection, book_id: int) -> Tuple[Optional[int], Optional[List[str]]]:
+    """(page_offset, PDF page labels) of a book. The labels are read from the PDF once and kept in the database
+    (`[]` when the PDF has none); a PDF that cannot be read now is retried next time."""
+    with connection.cursor() as cursor:
+        cursor.execute("SELECT page_offset, page_labels, file_path, file_hash FROM books WHERE id = %s", (book_id,))
+        row = cursor.fetchone()
+    if row is None:
+        return None, None
+    offset, labels, file_path, file_hash = row
+    if labels is None and file_path:
+        facts = book_facts(file_path, file_hash)
+        if facts["page_count"]:
+            labels = facts["labels"] or []
+            with connection.cursor() as cursor:
+                cursor.execute("UPDATE books SET page_labels = %s WHERE id = %s", (json.dumps(labels), book_id))
+            connection.commit()
+    return offset, (labels or None)
+
+
+def suggest_page_offset(connection, book_id: int) -> Dict[str, Any]:
+    """Look at the numbers printed in the headers / footers of sampled pages and suggest `page_offset` (or None)."""
+    from storage import get_storage  # pylint: disable=import-outside-toplevel
+
+    with connection.cursor() as cursor:
+        cursor.execute("SELECT file_path FROM books WHERE id = %s", (book_id,))
+        row = cursor.fetchone()
+    if row is None:
+        return {"offset": None, "reason": "Unknown book."}
+    with get_storage().local_copy(row[0]) as local_file, page_assets._RENDER_LOCK:  # pylint: disable=protected-access
+        with fitz.open(local_file) as pdf:
+            samples = {page: page_labels.margin_numbers(pdf, page) for page in page_labels.sample_pages(pdf.page_count)}
+    offset = page_labels.guess_offset(samples)
+    reason = None if offset is not None else "No consistent page numbers were found (a scanned book, or none printed)."
+    return {"offset": offset, "sampled_pages": len(samples), "reason": reason}
+
+
+def page_detail(connection, book_id: int, number: int) -> Optional[Dict[str, Any]]:
+    """Everything the reader shows for one page: image, word boxes (fractions of the page), printed label and the
+    neighbouring pages. Pages without a usable text layer are OCRed on first display (as for search highlights)."""
+    with connection.cursor() as cursor:
+        cursor.execute("SELECT file_path, file_hash, language_code, title FROM books WHERE id = %s", (book_id,))
+        row = cursor.fetchone()
+    if row is None:
+        return None
+    file_path, file_hash, language, title = row
+    total = book_facts(file_path, file_hash)["page_count"] or 0
+    if not file_hash or not 1 <= number <= total:
+        return None
+    data = page_assets.ensure_pages(file_path, file_hash, [number]).get(number)
+    if data is None:
+        return None
+    if (not data.get("words") or not data.get("text_usable", True)) and settings.ocr_highlight:
+        try:
+            data = page_assets.add_ocr_text(file_path, file_hash, number, language or "en") or data
+        except Exception as exc:  # pylint: disable=broad-except
+            print(f"[OSISS] Reader: OCR failed for book {book_id} page {number}: {exc}")
+    width, height = data["width"], data["height"]
+    offset, labels = book_label_info(connection, book_id)
+    label = page_labels.printed_label(number, offset, labels)
+    return {
+        "book_id": book_id,
+        "title": title,
+        "page": number,
+        "page_count": total,
+        "printed_label": label,
+        "citation_page": page_labels.citation_page(number, label),
+        "image": page_assets.asset_url(file_hash, data["image"]),
+        "width": width,
+        "height": height,
+        "ocr": bool(data.get("ocr")),
+        "words": [
+            [round(w[0] / width, 5), round(w[1] / height, 5), round(w[2] / width, 5), round(w[3] / height, 5), w[4], w[5]]
+            for w in data.get("words", [])
+        ],
+        "previous": number - 1 if number > 1 else None,
+        "next": number + 1 if number < total else None,
+    }
+
+
+def find_page_by_label(connection, book_id: int, text: str) -> Optional[int]:
+    """PDF page whose printed label is `text` ("233", "xii"), or None."""
+    wanted = (text or "").strip().lower()
+    if not wanted:
+        return None
+    offset, labels = book_label_info(connection, book_id)
+    if offset is not None:
+        if wanted.isdigit() and int(wanted) >= 1:
+            return int(wanted) + offset
+        return None
+    if labels:
+        for index, label in enumerate(labels):
+            if label.lower() == wanted:
+                return index + 1
+    return int(wanted) if wanted.isdigit() else None

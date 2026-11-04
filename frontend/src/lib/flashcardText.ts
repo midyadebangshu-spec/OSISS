@@ -1,6 +1,7 @@
 // What goes on a flashcard and how its text is laid out. Pure functions (no DOM), so they run under Node's test
 // runner (frontend/tests); the drawing is in flashcardRender.ts. Everything on a card comes from the book.
 
+import { sourceLabel } from './results.ts'
 import type { SearchResult } from '../types/search.ts'
 import { cleanBookText } from './textFormat.ts'
 
@@ -90,7 +91,7 @@ export function cardFromResult(result: SearchResult, query: string): CardContent
     const definition = result.blocks.find((block) => block.type === 'definition')
     const listBlock = result.blocks.find((block) => block.type === 'list')
     const figure = result.figures.find((item) => item.primary && item.caption) ?? result.figures.find((item) => item.primary)
-    const source = `${result.book_title} · p. ${result.page_number}`
+    const source = sourceLabel(result)
 
     let question: string
     let answer: string

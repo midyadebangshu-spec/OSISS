@@ -10,8 +10,13 @@ export const KIND_LABEL: Record<SearchResult['kind'], string> = {
     text: 'Passage',
 }
 
+/** "233" when the printed number is the PDF position or unknown, else "233 (PDF 245)": citations use the printed one. */
+export function pageLabel(page: number, printed?: string | null): string {
+    return printed && printed !== String(page) ? `${printed} (PDF ${page})` : String(page)
+}
+
 export function sourceLabel(result: SearchResult): string {
-    return `${result.book_title} · p. ${result.page_number}`
+    return `${result.book_title} · p. ${pageLabel(result.page_number, result.printed_page)}`
 }
 
 /** Whether a hit has a structured block (definition / list / code) to lead with. */

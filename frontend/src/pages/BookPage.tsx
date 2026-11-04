@@ -9,7 +9,7 @@ import { ResultsView } from '../components/layouts/ResultsView'
 import { ResultSkeleton } from '../components/ResultSkeleton'
 import { LANGUAGE_LABEL, getBook, getBookPages } from '../lib/libraryApi'
 import { figureLightboxItem } from '../lib/results'
-import { exploreHref, libraryHref } from '../lib/route'
+import { exploreHref, libraryHref, readerHref } from '../lib/route'
 import { searchRecords } from '../lib/searchApi'
 import { useViewer } from '../lib/viewer'
 import type { LightboxItem } from '../lib/viewer'
@@ -44,7 +44,6 @@ function Stat({ value, label }: { value: number | null; label: string }) {
 }
 
 function Contents({ book }: { book: BookDetail }) {
-    const { togglePage } = useViewer()
     const [expanded, setExpanded] = useState(false)
     const entries = expanded ? book.toc : book.toc.slice(0, 40)
     return (
@@ -52,15 +51,14 @@ function Contents({ book }: { book: BookDetail }) {
             <ol className="max-h-[32rem] divide-y divide-zinc-100 overflow-y-auto border-2 border-zinc-950">
                 {entries.map((entry, index) => (
                     <li key={index}>
-                        <button
-                            type="button"
-                            onClick={() => togglePage({ pdfLink: book.pdf_link, pageNumber: entry.page, title: book.title })}
+                        <a
+                            href={readerHref(book.id, entry.page)}
                             className="flex w-full items-baseline justify-between gap-3 px-3 py-1.5 text-left hover:bg-zinc-50"
                             style={{ paddingLeft: `${0.75 + (entry.level - 1) * 1.25}rem` }}
                         >
                             <span className={entry.level === 1 ? 'font-medium' : 'text-sm text-zinc-700'}>{entry.title}</span>
                             <span className="shrink-0 text-xs text-zinc-500">p. {entry.page}</span>
-                        </button>
+                        </a>
                     </li>
                 ))}
             </ol>
@@ -245,6 +243,7 @@ export function BookPage({ bookId }: { bookId: number }) {
     }
 
     const details = [book.author, book.department, book.publication_year, book.language && LANGUAGE_LABEL[book.language]].filter(Boolean)
+    const citation = [book.publisher, book.edition, book.isbn && `ISBN ${book.isbn}`].filter(Boolean)
     return (
         <div className="space-y-8">
             <a href={libraryHref()} className="inline-flex items-center gap-1 text-sm text-zinc-600 underline-offset-4 hover:text-zinc-950 hover:underline">
@@ -257,6 +256,7 @@ export function BookPage({ bookId }: { bookId: number }) {
                         <p className="text-xs uppercase tracking-[0.18em] text-zinc-500">Book</p>
                         <h1 className="text-2xl font-semibold tracking-tight md:text-4xl">{book.title}</h1>
                         {details.length > 0 && <p className="mt-1 text-zinc-600">{details.join(' · ')}</p>}
+                        {citation.length > 0 && <p className="text-sm text-zinc-500">{citation.join(' · ')}</p>}
                     </div>
                     <div className="flex flex-wrap gap-2">
                         <Stat value={book.page_count} label="pages" />
@@ -266,12 +266,18 @@ export function BookPage({ bookId }: { bookId: number }) {
                         <Stat value={book.concept_count} label="concepts" />
                     </div>
                     <div className="flex flex-wrap gap-3">
-                        <button
-                            type="button"
-                            onClick={() => togglePage({ pdfLink: book.pdf_link, pageNumber: 1, title: book.title })}
+                        <a
+                            href={readerHref(book.id, 1)}
                             className="inline-flex items-center gap-2 border-2 border-zinc-950 bg-zinc-950 px-4 py-2 text-sm font-medium text-white hover:bg-zinc-800"
                         >
                             <BookOpen className="h-4 w-4" /> Read
+                        </a>
+                        <button
+                            type="button"
+                            onClick={() => togglePage({ pdfLink: book.pdf_link, pageNumber: 1, title: book.title })}
+                            className="inline-flex items-center gap-2 border-2 border-zinc-950 px-4 py-2 text-sm font-medium hover:bg-zinc-50"
+                        >
+                            Open the PDF
                         </button>
                         <a href={book.pdf_link} download className="inline-flex items-center gap-2 border-2 border-zinc-950 px-4 py-2 text-sm font-medium hover:bg-zinc-50">
                             <Download className="h-4 w-4" /> Download PDF

@@ -77,6 +77,10 @@ export type Book = {
   pdf_link: string
   file_exists: boolean
   title_guessed: boolean
+  publisher: string | null
+  edition: string | null
+  isbn: string | null
+  page_offset: number | null
 }
 
 export type BookMetadata = {

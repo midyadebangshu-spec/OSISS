@@ -6,7 +6,7 @@ export type User = {
     created_at: string | null
 }
 
-export type EvidenceKind = 'passage' | 'definition' | 'figure' | 'table' | 'formula' | 'page' | 'concept'
+export type EvidenceKind = 'passage' | 'definition' | 'figure' | 'table' | 'formula' | 'page' | 'concept' | 'highlight'
 
 export type Evidence = {
     id: number
@@ -15,6 +15,8 @@ export type Evidence = {
     book_title: string | null
     book_author: string | null
     page_number: number | null
+    /** The number printed on the page when it differs from the PDF position ("233", "xii"); null when unknown. */
+    printed_page: string | null
     quote: string
     concept_key: string | null
     meta: Record<string, unknown>
@@ -31,6 +33,7 @@ export type EvidenceDraft = {
     concept_key?: string | null
     meta?: Record<string, unknown>
     collection_id?: number | null
+    project_id?: number | null
 }
 
 export type Collection = {
@@ -47,6 +50,7 @@ export type Note = {
     body: string
     evidence_id: number | null
     concept_links: string[]
+    project_id: number | null
     created_at: string | null
     updated_at: string | null
 }
@@ -54,9 +58,29 @@ export type Note = {
 export type Dashboard = {
     counts: { evidence: number; collections: number; notes: number }
     recent_searches: { query: string; at: string }[]
-    continue_reading: { book_id: number; title: string; author: string | null; department: string | null; at: string }[]
+    continue_reading: { book_id: number; title: string; author: string | null; department: string | null; at: string; page_number: number | null }[]
+    projects: Project[]
     recent_evidence: Evidence[]
     collections: Collection[]
     recent_notes: Note[]
     new_books_30_days: number
 }
+
+export type Project = {
+    id: number
+    title: string
+    question: string
+    description: string
+    book_count: number
+    evidence_count: number
+    note_count: number
+    created_at: string | null
+    updated_at: string | null
+}
+
+export type ProjectBook = { id: number; title: string; author: string | null; department: string | null; language: string | null }
+
+export type ProjectDetail = Project & { books: ProjectBook[]; evidence: Evidence[]; notes: Note[] }
+
+/** A highlight's rectangles are fractions of the page: [x0, y0, x1, y1] in 0..1. */
+export type HighlightRect = [number, number, number, number]

@@ -45,9 +45,60 @@ function MetadataFields({ draft, onChange }: { draft: MetadataDraft; onChange: (
   )
 }
 
+type CitationDraft = { publisher: string; edition: string; isbn: string; page_offset: string }
+
+function toCitation(book: Book): CitationDraft {
+  return {
+    publisher: book.publisher ?? '',
+    edition: book.edition ?? '',
+    isbn: book.isbn ?? '',
+    page_offset: book.page_offset === null ? '' : String(book.page_offset),
+  }
+}
+
+/** Details scholars need for citations: publisher, edition, ISBN, and how PDF pages map to printed page numbers. */
+function CitationFields({ bookId, draft, onChange }: { bookId: number; draft: CitationDraft; onChange: (draft: CitationDraft) => void }) {
+  const { call } = useServer()
+  const { busy, error, notice, run, setError, setNotice } = useAction()
+  const set = (key: keyof CitationDraft) => (event: ChangeEvent<HTMLInputElement>) => onChange({ ...draft, [key]: event.target.value })
+  const suggest = () =>
+    run(async () => {
+      const result = await call<{ offset: number | null; reason: string | null }>({ path: `/api/admin/books/${bookId}/page-offset-guess`, timeoutMs: 120_000 })
+      if (result.offset === null) throw new Error(result.reason ?? 'No suggestion.')
+      onChange({ ...draft, page_offset: String(result.offset) })
+      setNotice(`Suggested offset ${result.offset} (not saved yet). Open page ${result.offset + 1} of the PDF and check it shows printed page 1.`)
+    })
+  return (
+    <div className="space-y-3 rounded-md border border-slate-200 p-3">
+      <div className="text-sm font-medium">Citation details</div>
+      <div className="grid gap-3 md:grid-cols-2">
+        <Field label="Publisher">
+          <Input value={draft.publisher} onChange={set('publisher')} />
+        </Field>
+        <Field label="Edition">
+          <Input value={draft.edition} onChange={set('edition')} placeholder="2nd ed." />
+        </Field>
+        <Field label="ISBN" hint="ISBN-10 or ISBN-13; the check digit is verified.">
+          <Input value={draft.isbn} onChange={set('isbn')} placeholder="978-0-306-40615-7" />
+        </Field>
+        <Field label="Page offset" hint="Printed page = PDF page minus this. Leave empty if the PDF carries its own page labels, or the numbers are unknown.">
+          <div className="flex gap-2">
+            <Input value={draft.page_offset} onChange={set('page_offset')} inputMode="numeric" placeholder="e.g. 12" />
+            <Button busy={busy} onClick={suggest}>
+              Suggest
+            </Button>
+          </div>
+        </Field>
+      </div>
+      <Messages error={error} notice={notice} onClear={() => (setError(null), setNotice(null))} />
+    </div>
+  )
+}
+
 function EditBook({ book, onClose, onChanged }: { book: Book; onClose: () => void; onChanged: () => void }) {
   const { call, profile } = useServer()
   const [draft, setDraft] = useState(() => toDraft(book))
+  const [citation, setCitation] = useState(() => toCitation(book))
   const [confirmDelete, setConfirmDelete] = useState(false)
   const [jobId, setJobId] = useState<string | null>(null)
   // Re-ingesting creates a new book row; this one is then stale.
@@ -59,7 +110,14 @@ function EditBook({ book, onClose, onChanged }: { book: Book; onClose: () => voi
       await call({
         method: 'PATCH',
         path: `/api/admin/books/${book.id}`,
-        body: { ...draft, publication_year: draft.publication_year.trim() ? Number(draft.publication_year) : null },
+        body: {
+          ...draft,
+          publication_year: draft.publication_year.trim() ? Number(draft.publication_year) : null,
+          publisher: citation.publisher,
+          edition: citation.edition,
+          isbn: citation.isbn,
+          page_offset: citation.page_offset.trim() ? Number(citation.page_offset) : null,
+        },
       })
       onChanged()
     }, 'Saved. Search results show the new metadata immediately.')
@@ -86,6 +144,7 @@ function EditBook({ book, onClose, onChanged }: { book: Book; onClose: () => voi
           <Alert tone="amber">The title and author are still guessed from the file name. Please check them.</Alert>
         )}
         <MetadataFields draft={draft} onChange={setDraft} />
+        <CitationFields bookId={book.id} draft={citation} onChange={setCitation} />
         <div className="rounded-md bg-slate-50 p-3 text-xs text-slate-600">
           <div className="font-mono">{book.file_path}</div>
           <div className="mt-1">

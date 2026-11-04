@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { Library } from 'lucide-react'
 import { BookCover } from '../components/library/BookCover'
 import { BookPage } from './BookPage'
+import { ReaderPage } from './ReaderPage'
 import { LANGUAGE_LABEL, listBooks } from '../lib/libraryApi'
 import { libraryHref } from '../lib/route'
 import type { LibraryBook } from '../types/library'
@@ -160,13 +161,14 @@ function Shelf({ active }: { active: boolean }) {
     )
 }
 
-export function LibraryPage({ bookId, active }: { bookId: number | null; active: boolean }) {
+export function LibraryPage({ bookId, readPage, active }: { bookId: number | null; readPage: number | null; active: boolean }) {
     return (
         <>
             <div hidden={bookId !== null}>
                 <Shelf active={active} />
             </div>
-            {bookId !== null && <BookPage key={bookId} bookId={bookId} />}
+            {bookId !== null && readPage === null && <BookPage key={bookId} bookId={bookId} />}
+            {bookId !== null && readPage !== null && <ReaderPage key={`${bookId}-${readPage}`} bookId={bookId} page={readPage} />}
         </>
     )
 }

@@ -43,8 +43,9 @@ def client(tmp_path, monkeypatch):
     monkeypatch.setattr(load_control, "metrics", load_control.Metrics())
     monkeypatch.setattr(load_control, "_gate", None)
 
-    def fake_search(query, top_k, timings=None, book_id=None):
-        calls.append(top_k if book_id is None else (top_k, book_id))
+    def fake_search(query, top_k, timings=None, book_id=None, book_ids=None):
+        scope = book_id if book_ids is None else tuple(sorted(book_ids))
+        calls.append(top_k if scope is None else (top_k, scope))
         return {"query": query, "results": [{
             "quote": "The angle of incidence is always equal to the angle of reflection for a plane mirror.",
             "matched_paragraph": "Light travels in straight lines. The angle of incidence is always equal to the angle of "
@@ -55,6 +56,7 @@ def client(tmp_path, monkeypatch):
 
     monkeypatch.setattr(api_server, "search_and_extract", fake_search)
     monkeypatch.setattr(api_server, "book_hashes", lambda paths: {pdf_path: FILE_HASH})
+    monkeypatch.setattr(api_server, "printed_pages", lambda items: ["7" for _ in items])
     with TestClient(api_server.app) as test_client:
         test_client.calls = calls
         yield test_client
@@ -68,6 +70,7 @@ def test_rich_search_builds_pages_on_demand_and_serves_them(client):
     body = response.json()
     assert body["layout"] == {"kind": "visual", "hero": 0, "intents": ["visual"]}
     result = body["results"][0]
+    assert result["printed_page"] == "7"
     assert result["book_title"] == "Optics" and result["page_number"] == 1
     assert result["figures"][0]["label"] == "2.1" and result["figures"][0]["primary"]
     assert result["page"]["highlights"], "the quote is highlighted on the page image"
@@ -116,3 +119,12 @@ def test_book_scoped_search_is_passed_through_and_cached_separately(client):
     client.post("/api/search/rich", json={"query": "mirror", "book_id": 3})  # answered from the cache
     assert client.calls == [(None, 3), None]
     assert client.post("/api/search/rich", json={"query": "mirror", "book_id": 0}).status_code == 422
+
+
+def test_several_books_scope_is_validated_passed_through_and_cached_separately(client):
+    client.post("/api/search/rich", json={"query": "mirror", "book_ids": [5, 3]})
+    client.post("/api/search/rich", json={"query": "mirror", "book_ids": [3, 5]})  # same set: from the cache
+    client.post("/api/search/rich", json={"query": "mirror", "book_ids": [3]})
+    assert client.calls == [(None, (3, 5)), (None, (3,))]
+    for bad in ([], [0], [1] * 201):
+        assert client.post("/api/search/rich", json={"query": "mirror", "book_ids": bad}).status_code == 422

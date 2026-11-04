@@ -328,6 +328,10 @@ class MetadataPatch(BaseModel):
     author: Optional[str] = None
     publication_year: Optional[int] = None
     department: Optional[str] = None
+    publisher: Optional[str] = None
+    edition: Optional[str] = None
+    isbn: Optional[str] = None
+    page_offset: Optional[int] = None
 
 
 @router.get("/books")
@@ -349,6 +353,21 @@ def get_book(book_id: int) -> Dict[str, Any]:
             return admin.get_book(connection, book_id)
     except admin.AdminError as exc:
         _fail(exc)
+
+
+@router.get("/books/{book_id}/page-offset-guess")
+def page_offset_guess(book_id: int) -> Dict[str, Any]:
+    """Suggest `page_offset` from the numbers printed on sampled pages (the admin confirms it before saving)."""
+    import library  # pylint: disable=import-outside-toplevel
+
+    try:
+        with db() as connection:
+            admin.get_book(connection, book_id)
+            return library.suggest_page_offset(connection, book_id)
+    except admin.AdminError as exc:
+        _fail(exc)
+    except Exception as exc:  # pylint: disable=broad-except
+        raise HTTPException(500, f"Could not read the PDF: {exc}") from exc
 
 
 @router.patch("/books/{book_id}")
@@ -434,7 +453,7 @@ def metadata_guess(filename: str) -> Dict[str, Any]:
     from utils import infer_metadata_from_filename  # pylint: disable=import-outside-toplevel
 
     guess = infer_metadata_from_filename(filename)
-    return {name: guess.get(name) for name in admin.METADATA_FIELDS}
+    return {name: guess.get(name) for name in ("title", "author", "publication_year", "department")}
 
 
 @router.post("/books")

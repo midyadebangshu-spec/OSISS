@@ -291,3 +291,29 @@ def test_book_scope_filters_both_searches(monkeypatch, override):
     es.calls.clear()
     search.search_and_extract("what is a stack")  # the scope does not leak into the next search
     assert all("book_id" not in str(call) for call in es.calls)
+
+
+def test_several_books_scope_uses_a_terms_filter_and_does_not_leak(monkeypatch, override):
+    override(hybrid_mode="rrf", retrieval_candidates=5, exclude_exercises=False, keyword_same_language=True)
+    es = FakeES(dense=[hit("a", "a.pdf", 1, "Stacks are lists.")], keyword=[])
+    monkeypatch.setattr(search, "get_es_client", lambda: es)
+    monkeypatch.setattr(search, "get_models", lambda: (FakeEmbedder(), lambda q, c: {"answer": c[:1], "score": 0.5, "start": 0, "end": 1}))
+    monkeypatch.setattr(search, "get_reranker", lambda: FakeReranker())
+
+    search.search_and_extract("what is a stack", book_ids=[9, 4, 4])
+    knn_call = next(call for call in es.calls if "knn" in call)
+    keyword_call = next(call for call in es.calls if "query" in call)
+    assert {"terms": {"book_id": [4, 9]}} in knn_call["knn"]["filter"]["bool"]["filter"]
+    assert {"terms": {"book_id": [4, 9]}} in keyword_call["query"]["bool"]["filter"]
+
+    es.calls.clear()
+    search.search_and_extract("what is a stack", book_id=7, book_ids=[4])  # combined, sorted
+    assert {"terms": {"book_id": [4, 7]}} in next(c for c in es.calls if "knn" in c)["knn"]["filter"]["bool"]["filter"]
+
+    es.calls.clear()
+    search.search_and_extract("what is a stack", book_ids=[4])  # one book keeps the single-term filter
+    assert {"term": {"book_id": 4}} in next(c for c in es.calls if "knn" in c)["knn"]["filter"]["bool"]["filter"]
+
+    es.calls.clear()
+    search.search_and_extract("what is a stack")
+    assert all("book_id" not in str(call) for call in es.calls)

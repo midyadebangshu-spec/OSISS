@@ -1,4 +1,4 @@
-import type { Collection, Dashboard, Evidence, EvidenceDraft, Note, User } from '../types/workspace'
+import type { Collection, Dashboard, Evidence, EvidenceDraft, Note, Project, ProjectDetail, User } from '../types/workspace'
 
 /** Thrown for a non-2xx answer; `status` lets callers tell "sign in" (401) from other failures. */
 export class ApiError extends Error {
@@ -71,8 +71,23 @@ export async function changePassword(currentPassword: string, newPassword: strin
 export const getDashboard = (signal?: AbortSignal) => get<Dashboard>('/api/workspace/dashboard', signal)
 
 /** Remember a search or an opened book for the dashboard. Failures are ignored: it is a convenience. */
-export function recordActivity(kind: 'search' | 'book', ref: string, bookId?: number): void {
-    void request('POST', '/api/workspace/activity', { kind, ref, book_id: bookId ?? null }).catch(() => undefined)
+export function recordActivity(kind: 'search' | 'book', ref: string, bookId?: number, pageNumber?: number): void {
+    void request('POST', '/api/workspace/activity', {
+        kind,
+        ref,
+        book_id: bookId ?? null,
+        page_number: pageNumber ?? null,
+    }).catch(() => undefined)
+}
+
+/** The scholar's own highlights on one page of a book. */
+export async function listHighlights(bookId: number, page: number, signal?: AbortSignal): Promise<Evidence[]> {
+    return (
+        await get<{ items: Evidence[] }>(
+            `/api/workspace/evidence?kind=highlight&book_id=${bookId}&page_number=${page}&limit=200`,
+            signal,
+        )
+    ).items
 }
 
 export const saveEvidence = (draft: EvidenceDraft) => request<Evidence>('POST', '/api/workspace/evidence', draft)
@@ -106,15 +121,19 @@ export const addToCollection = (collectionId: number, evidenceId: number) =>
 export const removeFromCollection = (collectionId: number, evidenceId: number) =>
     request('DELETE', `/api/workspace/collections/${collectionId}/items/${evidenceId}`)
 
-export async function listNotes(options: { q?: string; concept?: string } = {}, signal?: AbortSignal): Promise<Note[]> {
+export async function listNotes(
+    options: { q?: string; concept?: string; projectId?: number } = {},
+    signal?: AbortSignal,
+): Promise<Note[]> {
     const params = new URLSearchParams()
     if (options.q) params.set('q', options.q)
     if (options.concept) params.set('concept', options.concept)
+    if (options.projectId) params.set('project_id', String(options.projectId))
     return (await get<{ notes: Note[] }>(`/api/workspace/notes?${params}`, signal)).notes
 }
 
-export const createNote = (title: string, body: string, evidenceId?: number) =>
-    request<Note>('POST', '/api/workspace/notes', { title, body, evidence_id: evidenceId ?? null })
+export const createNote = (title: string, body: string, evidenceId?: number, projectId?: number) =>
+    request<Note>('POST', '/api/workspace/notes', { title, body, evidence_id: evidenceId ?? null, project_id: projectId ?? null })
 
 export const updateNote = (id: number, fields: { title?: string; body?: string }) =>
     request<Note>('PATCH', `/api/workspace/notes/${id}`, fields)
@@ -122,3 +141,31 @@ export const updateNote = (id: number, fields: { title?: string; body?: string }
 export const deleteNote = (id: number) => request('DELETE', `/api/workspace/notes/${id}`)
 
 export const exportWorkspace = () => get<unknown>('/api/workspace/export')
+
+// --- projects -------------------------------------------------------------------------------------------------
+
+export async function listProjects(signal?: AbortSignal): Promise<Project[]> {
+    return (await get<{ projects: Project[] }>('/api/workspace/projects', signal)).projects
+}
+
+export const createProject = (title: string, question: string, bookIds: number[]) =>
+    request<ProjectDetail>('POST', '/api/workspace/projects', { title, question, book_ids: bookIds })
+
+export const getProject = (id: number, signal?: AbortSignal) => get<ProjectDetail>(`/api/workspace/projects/${id}`, signal)
+
+export const updateProject = (id: number, fields: { title?: string; question?: string; description?: string }) =>
+    request<ProjectDetail>('PATCH', `/api/workspace/projects/${id}`, fields)
+
+export const deleteProject = (id: number) => request('DELETE', `/api/workspace/projects/${id}`)
+
+export const addProjectBooks = (id: number, bookIds: number[]) =>
+    request<ProjectDetail>('POST', `/api/workspace/projects/${id}/books`, { book_ids: bookIds })
+
+export const removeProjectBook = (id: number, bookId: number) =>
+    request('DELETE', `/api/workspace/projects/${id}/books/${bookId}`)
+
+export const attachToProject = (projectId: number, evidenceId: number) =>
+    request('PUT', `/api/workspace/projects/${projectId}/evidence/${evidenceId}`)
+
+export const detachFromProject = (projectId: number, evidenceId: number) =>
+    request('DELETE', `/api/workspace/projects/${projectId}/evidence/${evidenceId}`)

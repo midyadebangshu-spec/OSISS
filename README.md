@@ -257,7 +257,8 @@ Every step names the setting that controls it (see [section 12](#12-configuratio
 | `GET /data/assets/<hash>/<name>.webp` | figure, table and equation crops and page images cut from the PDFs (same access rule as PDFs) |
 | `GET /data/pdfs/<file>.pdf` | PDFs from `PDF_DIR` only (opened by the page viewer at `#page=N`) |
 | `GET /ready` | load-balancer health check: 200 when this copy can answer searches, else 503 with the failing check |
-| `/api/auth/*`, `/api/workspace/*` | scholar accounts and their private workspace (cookie session; see [section 11.6.9](#1169-scholar-accounts-and-passwords)) |
+| `/api/auth/*`, `/api/workspace/*` | scholar accounts and their private workspace: saved items, collections, notes, projects, highlights (cookie session; see [section 11.6.9](#1169-scholar-accounts-and-passwords)) |
+| `GET /api/library/<id>/page/<n>`, `/find-page?label=` | the reader's page (image, word boxes, printed page number) and a printed-page lookup |
 | `/api/admin/*` | admin API for the desktop admin app, behind `ADMIN_TOKEN` (see [section 11](#11-using-the-admin-app-step-by-step)) |
 
 `/api/search` and `/data` follow the search access mode chosen in the admin app: **open** (anyone who can reach the server) or
@@ -1231,6 +1232,23 @@ Passwords are stored as scrypt hashes; login sessions are a 30-day HttpOnly cook
 and email lock further tries for 15 minutes. Behind HTTPS, set `PUBLIC_BASE_URL` to the `https://` address so the cookie is
 marked `Secure`.
 
+##### Projects, the reader and printed page numbers
+
+* **Projects** (Workspace → Projects): a question plus the books that should answer it. A search inside a project looks only
+  in its books (`book_ids` on `/api/search/rich`, up to 200). Saved items, highlights and notes can be filed under a project;
+  deleting a project keeps them.
+* **Reader** (the **Read** button on a book, or a saved item's page link): one page at a time. Drag over words to select
+  them, then **Highlight**, **Highlight and file…** (into a collection or project) or **Copy**. Highlights are saved items
+  drawn back on the page; click one to remove it. Scanned pages are OCRed when first opened, so a selection from them may
+  contain small recognition errors. The dashboard's "continue reading" resumes at the last page read.
+* **Printed page numbers.** A stored `page_number` is the position in the PDF; citations use the number printed on the page.
+  In the admin app, open a book and fill **Citation details**: publisher, edition, ISBN (check digit verified) and **Page
+  offset** (printed page = PDF page minus offset; **Suggest** samples header/footer numbers and proposes one only when most
+  sampled pages agree, and you confirm it before saving). An offset you set wins; otherwise the PDF's own page labels
+  (roman numerals included) are used; otherwise only the PDF position is shown. Results then read "Page 221 (PDF 233)".
+  `.venv/bin/python src/build_page_labels.py` reads the PDFs' labels once for existing books (the reader and library do it
+  lazily too); run `.venv/bin/python src/db_init.py` after upgrading to add the new columns.
+
 ### 11.7 How the app and the server are protected
 
 * **The app on a computer** is protected by the passkey. Saved servers and their admin tokens are encrypted with AES-256-GCM under
@@ -1708,9 +1726,10 @@ Running the evaluation while the API server is up can run out of GPU memory on a
    assignments, flashcards from the books' definitions with spaced repetition, saved searches that alert when a new book
    answers them, shared projects later.
    Decided: users are scholars, accounts live on the server (PostgreSQL), registration is open, passwords are reset by the
-   admin (no email), sharing projects comes later. **Phase 1 is built**: accounts, evidence items, collections, notes,
-   dashboard (continue reading, recent searches), JSON export, and the admin app's Scholars page. Not built yet: projects,
-   the reader with highlights, printed page numbers, references, the writing studio, the board, sharing.
+   admin (no email), sharing projects comes later. **Phases 1 and 2 are built**: accounts, evidence items, collections,
+   notes, dashboard, JSON export, the admin app's Scholars page; projects with scoped search, the reader with highlights
+   and reading progress, publisher / edition / ISBN and printed page numbers. Not built yet: references, the writing
+   studio, the board, sharing.
    Phases: (1) accounts in PostgreSQL (managed from the admin app) + evidence items + collections + notes + dashboard;
    (2) projects with scoped search, the reader with highlights, metadata and printed pages; (3) references and the
    writing studio; (4) research board, collaboration, study tools.

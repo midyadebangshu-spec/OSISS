@@ -1,4 +1,7 @@
-import type { Collection, Dashboard, Evidence, EvidenceDraft, Note, Project, ProjectDetail, User } from '../types/workspace'
+import type {
+    CitationStyle, Collection, Dashboard, Draft, DraftCheck, DraftSummary, Evidence, EvidenceDraft, Note, Project,
+    ProjectDetail, References, RenderedDraft, User,
+} from '../types/workspace'
 
 /** Thrown for a non-2xx answer; `status` lets callers tell "sign in" (401) from other failures. */
 export class ApiError extends Error {
@@ -94,9 +97,11 @@ export const saveEvidence = (draft: EvidenceDraft) => request<Evidence>('POST', 
 
 export const deleteEvidence = (id: number) => request('DELETE', `/api/workspace/evidence/${id}`)
 
-export const listEvidence = (collectionId?: number, signal?: AbortSignal) =>
+export const listEvidence = (options: { collectionId?: number; projectId?: number } = {}, signal?: AbortSignal) =>
     get<{ total: number; items: Evidence[] }>(
-        `/api/workspace/evidence?limit=200${collectionId ? `&collection_id=${collectionId}` : ''}`,
+        `/api/workspace/evidence?limit=200${options.collectionId ? `&collection_id=${options.collectionId}` : ''}${
+            options.projectId ? `&project_id=${options.projectId}` : ''
+        }`,
         signal,
     )
 
@@ -169,3 +174,36 @@ export const attachToProject = (projectId: number, evidenceId: number) =>
 
 export const detachFromProject = (projectId: number, evidenceId: number) =>
     request('DELETE', `/api/workspace/projects/${projectId}/evidence/${evidenceId}`)
+
+// --- writing studio and references ----------------------------------------------------------------------------
+
+export async function listDrafts(signal?: AbortSignal): Promise<DraftSummary[]> {
+    return (await get<{ drafts: DraftSummary[] }>('/api/workspace/drafts', signal)).drafts
+}
+
+export const createDraft = (title = '', body = '', style: CitationStyle = 'apa') =>
+    request<Draft>('POST', '/api/workspace/drafts', { title, body, style })
+
+export const getDraft = (id: number, signal?: AbortSignal) => get<Draft>(`/api/workspace/drafts/${id}`, signal)
+
+export const updateDraft = (id: number, fields: { title?: string; body?: string; style?: CitationStyle; project_id?: number | null }) =>
+    request<Draft>('PATCH', `/api/workspace/drafts/${id}`, fields)
+
+export const deleteDraft = (id: number) => request('DELETE', `/api/workspace/drafts/${id}`)
+
+export const renderDraft = (id: number, style?: CitationStyle, signal?: AbortSignal) =>
+    get<RenderedDraft>(`/api/workspace/drafts/${id}/render${style ? `?style=${style}` : ''}`, signal)
+
+export const checkDraft = (id: number) => request<DraftCheck>('POST', `/api/workspace/drafts/${id}/check`)
+
+export function draftExportUrl(id: number, format: 'docx' | 'tex' | 'md', style: CitationStyle): string {
+    return `/api/workspace/drafts/${id}/export?format=${format}&style=${style}`
+}
+
+export function getReferences(style: CitationStyle, projectId?: number, signal?: AbortSignal) {
+    return get<References>(`/api/workspace/references?style=${style}${projectId ? `&project_id=${projectId}` : ''}`, signal)
+}
+
+export function referencesFileUrl(format: 'bibtex' | 'ris', projectId?: number): string {
+    return `/api/workspace/references?format=${format}${projectId ? `&project_id=${projectId}` : ''}`
+}

@@ -1,4 +1,4 @@
-import { FolderKanban, FolderOpen, LayoutDashboard, NotebookPen } from 'lucide-react'
+import { BookMarked, FolderKanban, FolderOpen, LayoutDashboard, NotebookPen, PenLine } from 'lucide-react'
 import { useAuth } from '../lib/auth'
 import { workspaceHref } from '../lib/route'
 import type { WorkspaceTab } from '../lib/route'
@@ -6,12 +6,16 @@ import { CollectionsView } from '../components/workspace/CollectionsView'
 import { DashboardView } from '../components/workspace/DashboardView'
 import { NotesView } from '../components/workspace/NotesView'
 import { ProjectsView } from '../components/workspace/ProjectsView'
+import { ReferencesView } from '../components/workspace/ReferencesView'
+import { WritingView } from '../components/workspace/WritingView'
 
 const TABS: { tab: WorkspaceTab; label: string; icon: React.ReactNode }[] = [
     { tab: 'dashboard', label: 'Dashboard', icon: <LayoutDashboard className="h-4 w-4" /> },
     { tab: 'projects', label: 'Projects', icon: <FolderKanban className="h-4 w-4" /> },
     { tab: 'collections', label: 'Collections', icon: <FolderOpen className="h-4 w-4" /> },
     { tab: 'notes', label: 'Notes', icon: <NotebookPen className="h-4 w-4" /> },
+    { tab: 'writing', label: 'Writing', icon: <PenLine className="h-4 w-4" /> },
+    { tab: 'references', label: 'References', icon: <BookMarked className="h-4 w-4" /> },
 ]
 
 /** The signed-in scholar's workspace. Only mounted while its route is open, so each visit loads fresh data. */
@@ -47,6 +51,8 @@ export function WorkspacePage({ tab, id }: { tab: WorkspaceTab; id: number | nul
             {tab === 'projects' && <ProjectsView id={id} />}
             {tab === 'collections' && <CollectionsView id={id} />}
             {tab === 'notes' && <NotesView id={id} />}
+            {tab === 'writing' && <WritingView id={id} />}
+            {tab === 'references' && <ReferencesView />}
         </section>
     )
 }

@@ -274,6 +274,18 @@ CREATE TABLE IF NOT EXISTS project_evidence (
 CREATE INDEX IF NOT EXISTS idx_project_evidence_evidence ON project_evidence(evidence_id);
 ALTER TABLE notes ADD COLUMN IF NOT EXISTS project_id BIGINT REFERENCES projects(id) ON DELETE SET NULL;
 CREATE INDEX IF NOT EXISTS idx_notes_project ON notes(project_id);
+-- Writing studio drafts (src/drafts.py): Markdown-like text with [@e<evidence id>] citation tokens.
+CREATE TABLE IF NOT EXISTS drafts (
+    id BIGSERIAL PRIMARY KEY,
+    owner_id INT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    project_id BIGINT REFERENCES projects(id) ON DELETE SET NULL,
+    title TEXT NOT NULL DEFAULT '',
+    style TEXT NOT NULL DEFAULT 'apa',
+    body TEXT NOT NULL DEFAULT '',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_drafts_owner ON drafts(owner_id, updated_at DESC);
 -- Where the scholar stopped reading a book (the reader resumes there).
 ALTER TABLE user_activity ADD COLUMN IF NOT EXISTS page_number INT;
 """

@@ -8,7 +8,7 @@ export type Route =
     | { page: 'account' }
     | { page: 'workspace'; tab: WorkspaceTab; id: number | null }
 
-export type WorkspaceTab = 'dashboard' | 'projects' | 'collections' | 'notes'
+export type WorkspaceTab = 'dashboard' | 'projects' | 'collections' | 'notes' | 'writing' | 'references'
 
 export function parseHash(hash: string): Route {
     const explore = /^#\/explore(?:\/(\d+))?\/?$/.exec(hash)
@@ -23,7 +23,7 @@ export function parseHash(hash: string): Route {
         }
     }
     if (/^#\/account\/?$/.test(hash)) return { page: 'account' }
-    const workspace = /^#\/workspace(?:\/(projects|collections|notes)(?:\/(\d+))?)?\/?$/.exec(hash)
+    const workspace = /^#\/workspace(?:\/(projects|collections|notes|writing|references)(?:\/(\d+))?)?\/?$/.exec(hash)
     if (workspace) {
         return { page: 'workspace', tab: (workspace[1] as WorkspaceTab | undefined) ?? 'dashboard', id: workspace[2] ? Number(workspace[2]) : null }
     }

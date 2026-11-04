@@ -7,9 +7,11 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from pydantic import BaseModel, Field
 
+import citations
+import drafts
 import workspace
 from accounts_api import current_user
 from db_pool import db
@@ -64,6 +66,13 @@ class ProjectIn(BaseModel):
     question: Optional[str] = Field(default=None, max_length=2000)
     description: Optional[str] = Field(default=None, max_length=8000)
     book_ids: List[int] = Field(default_factory=list, max_length=200)
+
+
+class DraftIn(BaseModel):
+    title: Optional[str] = Field(default=None, max_length=400)
+    body: Optional[str] = Field(default=None, max_length=drafts.MAX_BODY * 2)
+    style: Optional[str] = Field(default=None, max_length=20)
+    project_id: Optional[int] = None
 
 
 class BookIds(BaseModel):
@@ -342,6 +351,131 @@ def detach_evidence(project_id: int, evidence_id: int, user: User = Depends(curr
         _found(workspace.detach_evidence(connection, user["id"], project_id, evidence_id))
         connection.commit()
     return {"ok": True}
+
+
+# --- writing studio -----------------------------------------------------------------------------------------------
+
+
+def _draft_fail(exc: drafts.DraftError):
+    raise HTTPException(exc.status, str(exc)) from exc
+
+
+@router.get("/drafts")
+def list_drafts(project_id: Optional[int] = None, user: User = Depends(current_user)):
+    with db() as connection:
+        return {"drafts": drafts.list_drafts(connection, user["id"], project_id)}
+
+
+@router.post("/drafts")
+def create_draft(payload: DraftIn, user: User = Depends(current_user)):
+    try:
+        with db() as connection:
+            draft = drafts.create_draft(
+                connection, user["id"], payload.title or "", payload.body or "", payload.style or "apa", payload.project_id
+            )
+            connection.commit()
+    except drafts.DraftError as exc:
+        _draft_fail(exc)
+    return draft
+
+
+@router.get("/drafts/{draft_id}")
+def get_draft(draft_id: int, user: User = Depends(current_user)):
+    with db() as connection:
+        return _found(drafts.get_draft(connection, user["id"], draft_id))
+
+
+@router.patch("/drafts/{draft_id}")
+def update_draft(draft_id: int, payload: DraftIn, user: User = Depends(current_user)):
+    try:
+        with db() as connection:
+            draft = _found(
+                drafts.update_draft(
+                    connection, user["id"], draft_id, payload.title, payload.body, payload.style, payload.project_id,
+                    set_project="project_id" in payload.model_fields_set,
+                )
+            )
+            connection.commit()
+    except drafts.DraftError as exc:
+        _draft_fail(exc)
+    return draft
+
+
+@router.delete("/drafts/{draft_id}")
+def delete_draft(draft_id: int, user: User = Depends(current_user)):
+    with db() as connection:
+        _found(drafts.delete_draft(connection, user["id"], draft_id))
+        connection.commit()
+    return {"ok": True}
+
+
+@router.get("/drafts/{draft_id}/render")
+def render_draft(draft_id: int, style: Optional[str] = None, user: User = Depends(current_user)):
+    try:
+        with db() as connection:
+            draft = _found(drafts.get_draft(connection, user["id"], draft_id))
+            return drafts.render_draft(connection, user["id"], draft, style)
+    except drafts.DraftError as exc:
+        _draft_fail(exc)
+
+
+@router.post("/drafts/{draft_id}/check")
+def check_draft(draft_id: int, user: User = Depends(current_user)):
+    """Compare every quotation in the draft with the page it cites."""
+    with db() as connection:
+        draft = _found(drafts.get_draft(connection, user["id"], draft_id))
+        return drafts.check_draft(connection, user["id"], draft)
+
+
+@router.get("/drafts/{draft_id}/export")
+def export_draft(draft_id: int, format: str = Query(pattern="^(docx|tex|md)$"), style: Optional[str] = None,
+                 user: User = Depends(current_user)):
+    import exporters  # pylint: disable=import-outside-toplevel
+
+    try:
+        with db() as connection:
+            draft = _found(drafts.get_draft(connection, user["id"], draft_id))
+            rendered = drafts.render_draft(connection, user["id"], draft, style)
+    except drafts.DraftError as exc:
+        _draft_fail(exc)
+    data, media_type, filename = exporters.export(rendered, format)
+    return Response(
+        content=data, media_type=media_type,
+        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote_name(filename)}"},
+    )
+
+
+def quote_name(name: str) -> str:
+    from urllib.parse import quote  # pylint: disable=import-outside-toplevel
+
+    return quote(name)
+
+
+# --- references ---------------------------------------------------------------------------------------------------
+
+
+@router.get("/references")
+def references(
+    style: str = Query(default="apa", pattern="^(apa|mla|chicago|ieee)$"),
+    project_id: Optional[int] = None,
+    format: str = Query(default="json", pattern="^(json|bibtex|ris)$"),
+    user: User = Depends(current_user),
+):
+    """The works the scholar uses, formatted in a style; `format=bibtex|ris` downloads a file."""
+    with db() as connection:
+        if project_id is not None:
+            _found(workspace.get_project(connection, user["id"], project_id, detail=False))
+        books = drafts.reference_books(connection, user["id"], project_id)
+    if format == "bibtex":
+        return Response(drafts.bibtex_file(books), media_type="application/x-bibtex; charset=utf-8",
+                        headers={"Content-Disposition": "attachment; filename=osiss-references.bib"})
+    if format == "ris":
+        return Response(drafts.ris_file(books), media_type="application/x-research-info-systems; charset=utf-8",
+                        headers={"Content-Disposition": "attachment; filename=osiss-references.ris"})
+    return {
+        "style": style, "styles": citations.STYLE_NAMES, "entries": drafts.reference_entries(books, style),
+        "books": [{k: v for k, v in b.items() if k != "has_page_labels"} for b in books],
+    }
 
 
 # --- export -------------------------------------------------------------------------------------------------------

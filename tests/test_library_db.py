@@ -199,3 +199,17 @@ def test_suggest_page_offset_reads_the_pdf(stored):
     result = library.suggest_page_offset(stored, 1)
     assert result["offset"] is None and result["sampled_pages"] >= 1 and result["reason"]
     assert library.suggest_page_offset(stored, 999)["offset"] is None
+
+
+def test_draft_page_text_uses_the_pdf_then_the_stored_chunks(stored):
+    import drafts
+
+    text = drafts.page_text(stored, 1, 1)
+    assert text and "Light" in text and "mirror" in text.lower()  # the synthetic PDF's first page
+    assert drafts.page_text(stored, 1, 99) is None and drafts.page_text(stored, 999, 1) is None
+    assert drafts.page_text(stored, 2, 3) is None  # no file, no chunks
+    with stored, stored.cursor() as cursor:
+        cursor.execute("INSERT INTO chunks (book_id, chunk_index, page_number, chunk_text) VALUES (2, 0, 3, 'Fallback chunk one.'), (2, 1, 3, 'Fallback chunk two.')")
+    assert drafts.page_text(stored, 2, 3) == "Fallback chunk one. Fallback chunk two."
+    with stored, stored.cursor() as cursor:
+        cursor.execute("DELETE FROM chunks WHERE book_id = 2")

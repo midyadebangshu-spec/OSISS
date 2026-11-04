@@ -531,11 +531,14 @@ def export_all(connection, owner_id: int) -> Dict[str, Any]:
             cursor.execute("SELECT evidence_id FROM project_evidence WHERE project_id = %s ORDER BY evidence_id", (project["id"],))
             evidence_ids = [row[0] for row in cursor.fetchall()]
         projects.append({**project, "book_ids": book_ids, "evidence_ids": evidence_ids})
+    import drafts  # pylint: disable=import-outside-toplevel
+
     return {
         "evidence": evidence,
         "collections": collections,
         "notes": list_notes(connection, owner_id, limit=1_000_000),
         "projects": projects,
+        "drafts": [drafts.get_draft(connection, owner_id, d["id"]) for d in drafts.list_drafts(connection, owner_id)],
     }
 
 

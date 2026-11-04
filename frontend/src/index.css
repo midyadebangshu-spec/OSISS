@@ -28,3 +28,9 @@
     font: inherit;
   }
 }
+/* "Print / PDF" in the writing studio prints only the preview. */
+@media print {
+  html.print-draft body * { visibility: hidden; }
+  html.print-draft #draft-preview, html.print-draft #draft-preview * { visibility: visible; }
+  html.print-draft #draft-preview { position: absolute; left: 0; top: 0; width: 100%; border: 0; }
+}

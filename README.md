@@ -258,6 +258,7 @@ Every step names the setting that controls it (see [section 12](#12-configuratio
 | `GET /data/pdfs/<file>.pdf` | PDFs from `PDF_DIR` only (opened by the page viewer at `#page=N`) |
 | `GET /ready` | load-balancer health check: 200 when this copy can answer searches, else 503 with the failing check |
 | `/api/auth/*`, `/api/workspace/*` | scholar accounts and their private workspace: saved items, collections, notes, projects, highlights (cookie session; see [section 11.6.9](#1169-scholar-accounts-and-passwords)) |
+| `/api/workspace/drafts*`, `/api/workspace/references` | writing studio (drafts, quote check, Word / LaTeX / Markdown export) and formatted references with BibTeX / RIS (see [11.6.9](#1169-scholar-accounts-and-passwords)) |
 | `GET /api/library/<id>/page/<n>`, `/find-page?label=` | the reader's page (image, word boxes, printed page number) and a printed-page lookup |
 | `/api/admin/*` | admin API for the desktop admin app, behind `ADMIN_TOKEN` (see [section 11](#11-using-the-admin-app-step-by-step)) |
 
@@ -1249,6 +1250,25 @@ marked `Secure`.
   `.venv/bin/python src/build_page_labels.py` reads the PDFs' labels once for existing books (the reader and library do it
   lazily too); run `.venv/bin/python src/db_init.py` after upgrading to add the new columns.
 
+##### Writing studio and references
+
+* **Writing** (Workspace → Writing): a draft is plain text. Insert a saved passage from the **Evidence** panel as a block quote
+  (`> text [@e12]`), an inline quotation (`“text” [@e12]`) or a bare citation (`[@e12]`, for a paraphrase); `# Heading` makes
+  headings and `*word*` italics. In the chosen style (APA 7, MLA 9, Chicago author-date, IEEE) every token becomes an in-text
+  citation with the **printed** page number (or "PDF p. 233" when it is not known), and the bibliography builds itself from
+  the books cited. Pick the style at any time; **Preview** shows the result and lists missing book details.
+* **Check quotes** compares each quotation with the text of the page it cites (the PDF's text, OCR for scans), ignoring line
+  breaks, hyphenation, case and quote marks. Result per quotation: matches the page; found on a *different* page; differs
+  (with what the page actually says); not found; no citation; cited source gone; or page text unavailable. Use `[…]` for an
+  omission and `[the stack]` for your own insertion; both split the quotation into pieces that must each appear, in order.
+* **Export**: Word (`.docx`, Bengali / Hindi runs get a complex-script font), LaTeX (a zip with `draft.tex` and
+  `references.bib`; compile with XeLaTeX or LuaLaTeX, it switches fonts for Bengali / Devanagari), Markdown, and **Print / PDF**
+  (the browser prints the preview, so no server software is needed). The LaTeX output has not been compiled in CI.
+* **References** (Workspace → References): the books the scholar saved from or put in a project, formatted in a style, with
+  copy buttons, BibTeX and RIS downloads, and warnings for missing details (year, publisher, printed page numbers). Books
+  only: no chapters, editors or translators. For several authors put `;` between names in the book's **Author** field in the
+  admin app; an organisation (NCERT, OpenStax, …) and Bengali / Hindi names are never inverted or abbreviated.
+
 ### 11.7 How the app and the server are protected
 
 * **The app on a computer** is protected by the passkey. Saved servers and their admin tokens are encrypted with AES-256-GCM under
@@ -1726,10 +1746,11 @@ Running the evaluation while the API server is up can run out of GPU memory on a
    assignments, flashcards from the books' definitions with spaced repetition, saved searches that alert when a new book
    answers them, shared projects later.
    Decided: users are scholars, accounts live on the server (PostgreSQL), registration is open, passwords are reset by the
-   admin (no email), sharing projects comes later. **Phases 1 and 2 are built**: accounts, evidence items, collections,
+   admin (no email), sharing projects comes later. **Phases 1 to 3 are built**: accounts, evidence items, collections,
    notes, dashboard, JSON export, the admin app's Scholars page; projects with scoped search, the reader with highlights
-   and reading progress, publisher / edition / ISBN and printed page numbers. Not built yet: references, the writing
-   studio, the board, sharing.
+   and reading progress, publisher / edition / ISBN and printed page numbers; references (APA, MLA, Chicago, IEEE, BibTeX,
+   RIS) and the writing studio with quote checking and Word / LaTeX / Markdown / PDF export. Not built yet: the research
+   board, sharing; deferred extras: chapters / editors / translators, Harvard and Vancouver, bilingual glossary.
    Phases: (1) accounts in PostgreSQL (managed from the admin app) + evidence items + collections + notes + dashboard;
    (2) projects with scoped search, the reader with highlights, metadata and printed pages; (3) references and the
    writing studio; (4) research board, collaboration, study tools.

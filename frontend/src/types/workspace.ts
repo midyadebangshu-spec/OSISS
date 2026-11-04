@@ -84,3 +84,50 @@ export type ProjectDetail = Project & { books: ProjectBook[]; evidence: Evidence
 
 /** A highlight's rectangles are fractions of the page: [x0, y0, x1, y1] in 0..1. */
 export type HighlightRect = [number, number, number, number]
+
+export type CitationStyle = 'apa' | 'mla' | 'chicago' | 'ieee'
+
+export type Draft = {
+    id: number
+    title: string
+    style: CitationStyle
+    project_id: number | null
+    created_at: string | null
+    updated_at: string | null
+    body: string
+}
+
+export type DraftSummary = Omit<Draft, 'body'> & { excerpt: string }
+
+/** Text carries `*italic*` markers; see lib/richText. */
+export type RenderedDraft = {
+    title: string
+    style: CitationStyle
+    blocks: { type: 'heading' | 'paragraph' | 'quote'; level?: number; text: string; line: number }[]
+    bibliography: { key: string; text: string }[]
+    warnings: { book: string | null; messages: string[] }[]
+    missing: number[]
+}
+
+export type QuoteStatus = 'verbatim' | 'other_page' | 'partial' | 'not_found' | 'uncited' | 'unknown_source' | 'unchecked'
+
+export type QuoteCheck = {
+    kind: 'block' | 'inline'
+    text: string
+    line: number
+    evidence_id: number | null
+    status: QuoteStatus
+    book?: string | null
+    page?: number | null
+    printed_page?: string | null
+    matched?: number
+    closest?: string | null
+    found_on_page?: number
+    matches_saved_quote?: boolean
+}
+
+export type DraftCheck = { quotes: QuoteCheck[]; counts: Record<string, number>; problems: number }
+
+export type ReferenceEntry = { book_id: number; plain: string; marked: string; html: string; warnings: string[] }
+
+export type References = { style: CitationStyle; styles: Record<CitationStyle, string>; entries: ReferenceEntry[] }

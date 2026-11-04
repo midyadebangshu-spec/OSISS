@@ -456,3 +456,135 @@ def test_saved_items_carry_the_printed_page(app, clean):
     assert client.get("/api/workspace/dashboard").json()["recent_evidence"][0]["printed_page"] == "10"
     concept = client.post("/api/workspace/evidence", json={"kind": "concept", "concept_key": "stack"}).json()
     assert concept["printed_page"] is None
+
+
+# --- writing studio and references ---------------------------------------------------------------------------------------
+
+QUOTE = "A stack is a linear data structure which follows the LIFO principle."
+
+
+def _saved(client, quote=QUOTE, page=12, **extra):
+    return client.post("/api/workspace/evidence", json={"kind": "passage", "book_id": 1, "page_number": page, "quote": quote, **extra}).json()
+
+
+def test_drafts_crud_validation_and_privacy(app):
+    ada, bob = scholar(app), scholar(app, "bob@example.edu")
+    pid = ada.post("/api/workspace/projects", json={"title": "P"}).json()["id"]
+    draft = ada.post("/api/workspace/drafts", json={"title": "Essay", "body": "# Hi\n\ntext", "project_id": pid}).json()
+    assert draft["style"] == "apa" and draft["project_id"] == pid and draft["body"].startswith("# Hi")
+    assert ada.post("/api/workspace/drafts", json={"style": "harvard"}).status_code == 400
+    assert ada.post("/api/workspace/drafts", json={"project_id": 999}).status_code == 404
+    assert ada.post("/api/workspace/drafts", json={"body": "x" * 200_001}).status_code == 413
+    listing = ada.get("/api/workspace/drafts").json()["drafts"]
+    assert [d["id"] for d in listing] == [draft["id"]] and "body" not in listing[0] and listing[0]["excerpt"].startswith("Hi")
+    assert ada.get(f"/api/workspace/drafts?project_id={pid}").json()["drafts"][0]["id"] == draft["id"]
+    assert ada.get("/api/workspace/drafts?project_id=999").json()["drafts"] == []
+
+    updated = ada.patch(f"/api/workspace/drafts/{draft['id']}", json={"body": "new", "style": "ieee"}).json()
+    assert updated["body"] == "new" and updated["style"] == "ieee" and updated["title"] == "Essay" and updated["project_id"] == pid
+    assert ada.patch(f"/api/workspace/drafts/{draft['id']}", json={"project_id": None}).json()["project_id"] is None
+
+    did = draft["id"]
+    assert bob.get(f"/api/workspace/drafts/{did}").status_code == 404
+    assert bob.patch(f"/api/workspace/drafts/{did}", json={"body": "hijack"}).status_code == 404
+    assert bob.delete(f"/api/workspace/drafts/{did}").status_code == 404
+    assert bob.get(f"/api/workspace/drafts/{did}/render").status_code == 404
+    assert bob.post(f"/api/workspace/drafts/{did}/check").status_code == 404
+    assert bob.get(f"/api/workspace/drafts/{did}/export?format=md").status_code == 404
+    assert bob.get("/api/workspace/drafts").json()["drafts"] == []
+    assert bob.post("/api/workspace/drafts", json={"project_id": pid}).status_code == 404  # her project
+    assert ada.get(f"/api/workspace/drafts/{did}").json()["body"] == "new"
+    assert ada.delete(f"/api/workspace/drafts/{did}").status_code == 200
+    assert ada.get(f"/api/workspace/drafts/{did}").status_code == 404
+
+
+def test_draft_citations_come_only_from_the_owners_evidence(app, clean):
+    ada, bob = scholar(app), scholar(app, "bob@example.edu")
+    item = _saved(ada)
+    with clean, clean.cursor() as cursor:
+        cursor.execute("UPDATE books SET publication_year = 2014, publisher = 'Oxford University Press', page_offset = 0 WHERE id = 1")
+    draft = bob.post("/api/workspace/drafts", json={"body": f"Stolen [@e{item['id']}]."}).json()
+    rendered = bob.get(f"/api/workspace/drafts/{draft['id']}/render").json()
+    assert rendered["blocks"][0]["text"] == "Stolen [source missing]." and rendered["missing"] == [item["id"]]
+    assert rendered["bibliography"] == []
+    assert bob.post(f"/api/workspace/drafts/{draft['id']}/check").json()["counts"] == {}  # no quotations in it
+
+    mine = ada.post("/api/workspace/drafts", json={"body": f"Stacks [@e{item['id']}]."}).json()
+    rendered = ada.get(f"/api/workspace/drafts/{mine['id']}/render").json()
+    assert rendered["blocks"][0]["text"] == "Stacks (Author, 2014, p. 12)." and rendered["title"] == "Untitled draft"
+    assert rendered["bibliography"][0]["text"] == "Author, A. (2014). *Data Structures*. Oxford University Press."
+    assert ada.get(f"/api/workspace/drafts/{mine['id']}/render?style=mla").json()["blocks"][0]["text"] == "Stacks (Author 12)."
+    assert ada.get(f"/api/workspace/drafts/{mine['id']}/render?style=harvard").status_code == 400
+
+
+def test_draft_check_compares_quotes_with_the_page(app, monkeypatch):
+    import drafts
+
+    pages = {(1, 12): "Intro. A stack is a linear data structure which follows the LIFO principle. More text.",
+             (1, 13): "Elsewhere: the queue is first in first out."}
+    monkeypatch.setattr(drafts, "page_text", lambda connection, book, page: pages.get((book, page)))
+    client = scholar(app)
+    item = _saved(client)
+    other = _saved(client, "The queue is first in first out.", page=13)
+    body = (f"> A stack is a linear data structure which follows the LIFO principle. [@e{item['id']}]\n\n"
+            f"> A stack is a linear data structure that follows the FIFO principle. [@e{item['id']}]\n\n"
+            f"“the queue is first in first out” [@e{item['id']}]\n\n> Nobody said this at all, honestly\n\n"
+            f"“Words quoted from {{somewhere}} that has gone missing entirely” [@e9999]")
+    draft = client.post("/api/workspace/drafts", json={"body": body}).json()
+    result = client.post(f"/api/workspace/drafts/{draft['id']}/check").json()
+    assert [q["status"] for q in result["quotes"]] == ["verbatim", "partial", "other_page", "uncited", "unknown_source"]
+    assert result["quotes"][1]["closest"].startswith("A stack is a linear data structure which follows")
+    assert result["quotes"][2]["found_on_page"] == 13 and result["problems"] == 4
+    assert result["quotes"][0]["book"] == "Data Structures"
+    assert other["id"] != item["id"]
+
+
+def test_draft_export_endpoints(app):
+    docx = pytest.importorskip("docx")
+    import io
+    import zipfile
+
+    client = scholar(app)
+    item = _saved(client)
+    draft = client.post("/api/workspace/drafts", json={"title": "My essay", "body": f"# Intro\n\nA stack [@e{item['id']}].", "style": "chicago"}).json()
+    md = client.get(f"/api/workspace/drafts/{draft['id']}/export?format=md")
+    assert md.status_code == 200 and "attachment" in md.headers["content-disposition"] and "My%20essay.md" in md.headers["content-disposition"]
+    assert "(Author n.d.," in md.text and "## References" in md.text
+    word = client.get(f"/api/workspace/drafts/{draft['id']}/export?format=docx")
+    assert docx.Document(io.BytesIO(word.content)).paragraphs[0].text == "My essay"
+    tex = client.get(f"/api/workspace/drafts/{draft['id']}/export?format=tex&style=ieee")
+    with zipfile.ZipFile(io.BytesIO(tex.content)) as archive:
+        assert "[1, PDF p. 12]" in archive.read("draft.tex").decode()
+    assert client.get(f"/api/workspace/drafts/{draft['id']}/export?format=pdf").status_code == 422
+
+
+def test_references_listing_and_files(app, clean):
+    client = scholar(app)
+    with clean, clean.cursor() as cursor:
+        cursor.execute("UPDATE books SET publication_year = 2014, publisher = 'Oxford University Press', edition = '2nd' WHERE id = 1")
+    assert client.get("/api/workspace/references").json()["entries"] == []  # nothing saved yet
+    _saved(client)
+    pid = client.post("/api/workspace/projects", json={"title": "P", "book_ids": [2]}).json()["id"]
+    listing = client.get("/api/workspace/references?style=mla").json()
+    assert [e["plain"] for e in listing["entries"]] == [
+        "Author, A. Data Structures. 2nd ed., Oxford University Press, 2014.",
+        "Author, B. Algorithms.",
+    ]
+    assert listing["entries"][0]["warnings"] == ["Printed page numbers unknown: pages are cited as PDF positions."]
+    only_project = client.get(f"/api/workspace/references?project_id={pid}").json()["entries"]
+    assert [e["book_id"] for e in only_project] == [2]
+    assert client.get("/api/workspace/references?project_id=999").status_code == 404
+    assert client.get("/api/workspace/references?style=harvard").status_code == 422
+    bib = client.get("/api/workspace/references?format=bibtex")
+    assert "attachment" in bib.headers["content-disposition"] and "@book{author2014data," in bib.text
+    ris = client.get("/api/workspace/references?format=ris&project_id=" + str(pid))
+    assert ris.text.count("TY  - BOOK") == 1 and "TI  - Algorithms" in ris.text
+    other = scholar(app, "bob@example.edu")
+    assert other.get("/api/workspace/references").json()["entries"] == []  # nobody else's reading list
+    assert other.get(f"/api/workspace/references?project_id={pid}").status_code == 404
+
+
+def test_export_includes_drafts(app):
+    client = scholar(app)
+    client.post("/api/workspace/drafts", json={"title": "D", "body": "text"})
+    assert client.get("/api/workspace/export").json()["drafts"][0]["body"] == "text"

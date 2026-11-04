@@ -1,3 +1,5 @@
+<p align="center"><img src="frontend/public/logo.svg" width="360" alt="OSISS: Open-Source Institutional Scholar Search"></p>
+
 # OSISS — Open-Source Institutional Scholar Search
 
 OSISS is an **offline, multilingual (Bengali / Hindi / English) semantic search engine over institutional PDFs**
@@ -5,6 +7,11 @@ OSISS is an **offline, multilingual (Bengali / Hindi / English) semantic search 
 romanized ("goti kake bole?"), or a mix — and it returns **extractive quotes taken verbatim from the books**,
 with the book, the page, a highlighted paragraph and a link into the PDF. It never generates text, so it cannot
 invent an answer; everything on screen exists in a source book.
+
+Around the search there is a **scholar workspace** on the website (accounts, a reader with highlights, projects,
+collections and notes, a writing studio that checks every quotation against its page, references in four citation
+styles, a research board, flashcards and saved-search alerts; see [8.14](#814-scholar-workspace)) and a **desktop admin
+app** that runs the server, edits the library and puts the website live ([section 11](#11-using-the-admin-app-step-by-step)).
 
 This document describes the whole project: what it is made of, how a query flows through it, the maths behind each
 step, every improvement that was tried (with measured results and graphs, including the ideas that did *not* work),
@@ -43,9 +50,11 @@ and what is still weak.
 |---|---|
 | **What it returns** | Verbatim sentences from the books (extractive QA), the matched paragraph with the answer highlighted, book title, author, department, page number, a PDF link. |
 | **Languages** | Bengali, Hindi, English. Queries may be native script, romanized Bengali/Hindi, or mixed. |
-| **Corpus today** | 17 books, 5,485 pages, 8,606 chunks: 8 English books and 9 Bengali/Hindi textbooks. |
+| **Corpus today** | 24 books, 9,819 pages with text, 16,071 chunks: 15 English books and 9 Bengali/Hindi textbooks (the accuracy figures below were measured on the first 17). |
 | **Runs offline** | All models load from `models/` with `local_files_only=True`; no external API calls at query time. |
 | **Hardware used for the numbers below** | One RTX 3060 (12 GB). About 2.1–2.7 s per query, 3.6 s for mixed-language queries. |
+| **Scholar workspace** | Optional accounts on the website: save passages with their book and page, highlight in a reader, group work in projects, write with checked quotations and automatic bibliographies, plan on a board, study with flashcards ([8.14](#814-scholar-workspace)). Search itself needs no account. |
+| **Admin app** | Electron desktop app: start services, add and fix books, scholars and passwords, search settings, access, and building and publishing the website ([section 11](#11-using-the-admin-app-step-by-step)). |
 | **Accuracy** | Right page in the top 3 for **96 %** of 109 evaluation questions (top-1: 81 %). See [section 9](#9-current-accuracy-and-known-limits) for why that number is optimistic. |
 
 ---
@@ -711,6 +720,128 @@ Book details come from the database (fix them in the admin app). Titles guessed 
 corpus ("DATA / STRUCTURE", "Pages / from", "Class / X"), so they were corrected from each book's opening pages through
 the admin metadata path (PostgreSQL and Elasticsearch), and `books.language_code` was filled for the older books.
 
+### 8.14 Scholar workspace
+
+Search works for everyone without an account. A scholar who signs in gets a private workspace built around one idea: every
+saved thing is an **evidence item** that keeps its source (book, page, the exact quote), so collections, notes, projects,
+drafts, the board and flashcards all point at the same verified passages. The workspace never writes text of its own: it
+saves, organises and checks what the books say. Everything is private to the account, **Download everything (JSON)** exports
+it, and an administrator resets forgotten passwords in the admin app (there is no email). The screenshots below use two openly
+licensed books, OpenStax *Introduction to Computer Science* (Rice University, CC BY-NC-SA 4.0) and Pat Morin's *Open Data
+Structures*; the account, project and notes are invented for the demonstration.
+
+#### Accounts and saving
+
+<img src="docs/images/site/signup.png" width="520" alt="Create an account">
+
+**Sign in** in the top bar opens the account page; anyone can create an account (`REGISTRATION_MODE=open`; set it to `closed`
+and the administrator creates accounts in the admin app). Once signed in, every result has a **Save** button that files the
+quote under a collection or a project, or just saves it.
+
+<img src="docs/images/site/search-save.png" width="720" alt="A search result with the Save menu open">
+
+Note the page label: **Page 544 (PDF 558)**. A stored `page_number` is the position in the PDF; citations use the number
+printed on the page, which the administrator sets per book (see [11.6.9](#1169-scholar-accounts-and-passwords)). "Tell me when
+a new book answers this" under the search box saves the search for alerts (below).
+
+<img src="docs/images/site/account.png" width="520" alt="The account page">
+
+#### Dashboard
+
+<img src="docs/images/site/dashboard.png" width="720" alt="The workspace dashboard">
+
+The dashboard shows what is new (alerts about saved searches), where to continue reading, recent searches, flashcards due,
+projects, collections, recent notes and what was saved last.
+
+#### Library, reader and highlights
+
+<img src="docs/images/site/library-book.png" width="720" alt="A book page in the library">
+
+A book's page shows its details (author, year, publisher, edition and ISBN when the administrator has filled them in), its
+contents and a **Read** button. The reader shows one page at a time: drag over words to select them, then **Highlight**,
+**Highlight and file…** into a collection or project, or **Copy**. Arrow keys turn pages, and **Go to page** takes a printed
+page number such as 324 or xii.
+
+<img src="docs/images/site/reader-highlight.png" width="720" alt="The reader with a highlighted passage">
+
+Highlights are saved items drawn back on the page, and the dashboard resumes at the last page read. Scanned pages are OCRed
+when first opened, so a selection from them may contain small recognition errors.
+
+#### Collections and notes
+
+<img src="docs/images/site/collections.png" width="720" alt="A collection of saved items">
+
+A collection is a named set of saved items. Each item shows its source and offers **Flashcard** (below).
+
+<img src="docs/images/site/note.png" width="720" alt="A note linking a concept">
+
+Notes autosave. A `[[concept]]` in the text links to the Context Explorer, and other notes that use the same concept are shown
+as backlinks.
+
+#### Projects and scoped search
+
+<img src="docs/images/site/project-search.png" width="720" alt="A research project with a search limited to its books">
+
+A project is a question plus the books that should answer it. **Search these books** looks only in them (`book_ids` on
+`/api/search/rich`). Saved items, highlights and notes can be filed under a project; deleting a project keeps them.
+
+#### Writing studio
+
+A draft is plain text. Insert a saved passage from the **Evidence** panel as a block quotation, an inline quotation or a
+citation only; `# Heading` makes headings and `*word*` italics. In the chosen style (APA 7, MLA 9, Chicago author-date,
+IEEE) every citation token becomes an in-text citation with the printed page, and the bibliography builds itself.
+
+<img src="docs/images/site/writing-preview.png" width="720" alt="A draft with its formatted preview and bibliography">
+
+**Check quotes** compares each quotation with the text of the page it cites, ignoring line breaks, hyphenation, case and quote
+marks, and says what it found:
+
+<img src="docs/images/site/writing-check.png" width="720" alt="The quote check flagging two of three quotations">
+
+The first quotation matches its page. The second was edited by one phrase, so the check shows what the page actually says. The
+third is not on the cited page at all. Use `[…]` for an omission and `[the stack]` for your own insertion. A quotation with no
+citation is flagged too. Drafts export to Word (`.docx`), LaTeX (a zip with `draft.tex` and `references.bib`, compiled with
+XeLaTeX) and Markdown, or print to PDF from the preview.
+
+#### References
+
+<img src="docs/images/site/references.png" width="720" alt="The reference list in APA style">
+
+The books you saved from or put in a project, formatted in APA 7, MLA 9, Chicago (author-date) or IEEE, with copy buttons and
+BibTeX and RIS downloads. Warnings appear for missing details (year, publisher, printed page numbers), which the administrator
+fills in. Books only for now: chapters, editors and translators are not modelled.
+
+#### Research board
+
+<img src="docs/images/site/board.png" width="720" alt="A research board with claims, evidence and concepts">
+
+Every project has a board: *claims* you write, saved *evidence*, *notes* and *concepts* on a free canvas (drag, pan, zoom),
+joined by typed links: supports, contradicts, explains, relates. Choose a link type, click the node it starts from, then the
+node it points to. **Concepts → Add with neighbours** puts a concept and the concepts the textbooks teach with it on the
+board. A claim with no supporting evidence is outlined in amber, and **Make a draft** turns the board into a writing-studio
+outline (claims as headings, their evidence as cited block quotations), ready for the quote check.
+
+#### Study and saved searches
+
+<img src="docs/images/site/study-cards.png" width="720" alt="The flashcard list">
+
+**Flashcard** on a saved item makes a card whose back is always the book's own words with their page. A saved definition asks
+"What is meant by “…”?" by itself; for anything else you write the question. **Make cards from definitions** does a whole
+collection or project at once.
+
+<img src="docs/images/site/study-review.png" width="720" alt="A flashcard review">
+
+Review uses the SM-2 spaced-repetition schedule: grade each card again, hard, good or easy (keys 1 to 4; space shows the answer)
+and it returns after 1 day, then 6, then longer. The dashboard shows how many are due.
+
+Saved searches are re-run when the library changes (a book added or re-ingested), a few per dashboard visit and through the
+normal search queue, and the dashboard shows a notice for every book that now answers one and did not before (the blue
+banner in the dashboard screenshot above). Notices are in-app only.
+
+The code is in `src/accounts.py`, `workspace.py`, `drafts.py`, `citations.py`, `quotes.py`, `board.py`, `srs.py`, `study.py`
+and `alerts.py` with their `*_api.py` routes, and `frontend/src/pages` and `components/workspace`; `CLAUDE.md` describes each
+module's design.
+
 ### 8.9 Eval-set growth over the project
 
 Each row is a different question set, so the rows are not directly comparable; they show what each change did on the set that existed at the time.
@@ -1226,6 +1357,8 @@ account. Everything a scholar saves is private to them; **Download everything (J
 
 In the admin app, **Scholars** lists the accounts with how much each has saved, and lets you:
 
+<img src="docs/images/admin/scholars.png" width="720" alt="The Scholars page of the admin app">
+
 * **Reset password**: sets a temporary password, shown once. The scholar is signed out everywhere and must choose their own
   at the next sign-in. There is no email, so this is the only way back in.
 * **Switch an account off** (blocks sign-in, keeps the data) or **delete** it (removes the account and everything saved).
@@ -1244,6 +1377,8 @@ marked `Secure`.
   them, then **Highlight**, **Highlight and file…** (into a collection or project) or **Copy**. Highlights are saved items
   drawn back on the page; click one to remove it. Scanned pages are OCRed when first opened, so a selection from them may
   contain small recognition errors. The dashboard's "continue reading" resumes at the last page read.
+<img src="docs/images/admin/edit-book-citation.png" width="720" alt="The book editor with Citation details">
+
 * **Printed page numbers.** A stored `page_number` is the position in the PDF; citations use the number printed on the page.
   In the admin app, open a book and fill **Citation details**: publisher, edition, ISBN (check digit verified) and **Page
   offset** (printed page = PDF page minus offset; **Suggest** samples header/footer numbers and proposes one only when most
@@ -1295,6 +1430,8 @@ marked `Secure`.
 
 The **Website** page of the admin app builds the website and serves it from the OSISS server itself; nothing is live until you
 click **Go live**.
+
+<img src="docs/images/admin/website.png" width="720" alt="The Website page of the admin app">
 
 1. **Build website** runs `npm install` (only when packages changed) and `npm run build` in `frontend/` on the server and shows the
    log. It needs Node.js 20.19+ or 22.12+ on that machine; the page says so when it is missing or too old. An nvm install is found
@@ -1650,7 +1787,13 @@ src/
   concepts.py              Context Explorer graph: candidate terms, gloss merging, mentions, links, relations
   concept_store.py         concept graph storage (PostgreSQL) and lookups; concept_api.py serves /api/concepts
   build_concepts.py        rebuilds the concept graph from the ingested books
-  library.py               the website's library: covers, contents, counts, page images (library_api.py serves it)
+  library.py               the website's library: covers, contents, counts, page images, the reader's page words (library_api.py serves it)
+  accounts.py, accounts_api.py   scholar accounts: scrypt passwords, session cookie, lockout (/api/auth)
+  workspace.py, workspace_api.py evidence items, collections, notes, projects, dashboard, export (/api/workspace)
+  drafts.py, citations.py, quotes.py, exporters.py   writing studio: drafts, APA/MLA/Chicago/IEEE, quote check, docx/LaTeX/Markdown
+  board.py, srs.py, study.py, alerts.py              research board, SM-2 flashcards, saved-search alerts
+  page_labels.py, build_page_labels.py               printed page numbers (offset or PDF labels), ISBN check
+  website.py               builds and serves frontend/dist while the admin has switched it live
   translit.py              romanized-query detection and IndicXlit transliteration
   ingest.py                ingestion pipeline (watcher or --once, --only)
   utils.py                 PDF extraction, OCR fallback, chunking, language and exercise heuristics
@@ -1668,7 +1811,8 @@ frontend/                  React + TypeScript + Tailwind UI
   src/components/ResultCard.tsx   result card: lead block, highlighted paragraph, figures, tables, equations, page
   src/components/blocks/          definition / list / code views, figure / table / equation / page views
   src/components/Lightbox.tsx     full-screen figure and page viewer
-  src/pages/                      SearchPage, ExplorerPage, LibraryPage, BookPage (hash routes #/, #/explore/<id>, #/library/<id>)
+  src/pages/                      SearchPage, ExplorerPage, LibraryPage, BookPage, ReaderPage, AccountPage, WorkspacePage (hash routes #/, #/explore/<id>, #/library/<id>[/read/<page>], #/account, #/workspace/...)
+  src/components/workspace/       dashboard, projects, collections, notes, writing studio, references, research board, study
   src/components/explorer/        concept view and graph (dependency-free force layout in src/lib/forceLayout.ts)
   src/lib/searchApi.ts            API client and response normalisation
   src/lib/textFormat.ts           display cleanup and quote/answer highlighting
@@ -1676,7 +1820,8 @@ admin/                     Electron admin app (React + TypeScript + Tailwind)
   electron/main.ts                window, IPC, all server calls (adds the admin token)
   electron/vault.ts               passkey vault: scrypt + AES-GCM + OS keychain, lockout
   electron/localControl.ts        docker compose / api.sh control for a server on this computer
-  src/pages/                      Dashboard, Books, Ingestion, Search console, Settings, Access, Servers, Security
+  src/pages/                      Dashboard, Books, Ingestion, Search console, Settings, Access, Website, Scholars, Servers, Security
+  build/icons/, build/icon.png    the app icon in the sizes installers and launchers need
 tests/
   eval_search.py           evaluation harness (hit@k, MRR, nDCG, per-group, latency, --compare)
   eval/questions.json      109 labelled questions
@@ -1687,6 +1832,7 @@ docs/
   make_figures.py          regenerates docs/images/*.png from results.json
   images/                  the graphs
   images/admin/            admin app screenshots used in section 11
+  images/site/             website screenshots used in section 8.14
 data/pdfs/                 source PDFs (git-ignored)
 data/assets/               analysed pages: crops, page images, JSON (git-ignored)
 models/                    local model cache (git-ignored)
@@ -1733,7 +1879,7 @@ pip install matplotlib
 python docs/make_figures.py
 ```
 
-The tests cover ranking maths, search with a fake Elasticsearch client and fake models, the OCR fallback decision, transliteration gating and the confidence fallback.
+The tests cover ranking maths, search with a fake Elasticsearch client and fake models, the OCR fallback decision, transliteration gating and the confidence fallback, and the scholar workspace (citation styles, quote checking, SM-2, boards, drafts, alerts, website serving). `test_accounts_db.py` and `test_library_db.py` need PostgreSQL and are skipped without it. The website's own tests: `cd frontend && npm test && npm run lint && npm run build`.
 Running the evaluation while the API server is up can run out of GPU memory on a 12 GB card; stop the API or use `INFERENCE_DEVICE=cpu` for retrieval-only runs.
 
 ---
@@ -1770,7 +1916,7 @@ Running the evaluation while the API server is up can run out of GPU memory on a
 6. ~~**Scaling out for heavy public traffic**~~ — done: several API copies sharing state through PostgreSQL, S3 storage,
    optional Redis, and an AWS deployment ([11.9](#119-running-several-copies)). Next: apply the AWS configuration to a real
    account and measure real GPU throughput.
-7. **Academic workspace** (phase 1 built: see [11.6.9](#1169-scholar-accounts-and-passwords)). Personal, private workspaces on top of search, the Explorer and the
+7. **Academic workspace** (built except sharing and teacher lists: see [8.14](#814-scholar-workspace) and [11.6.9](#1169-scholar-accounts-and-passwords)). Personal, private workspaces on top of search, the Explorer and the
    library, built around one *evidence item* model: every saved passage, answer, definition, figure, table, page, concept
    link or note keeps its source (book, page, quote, content hash), so collections, notes, the board and drafts all
    reference the same items. Modules: Dashboard (continue reading, recent searches, projects, what is new), Research

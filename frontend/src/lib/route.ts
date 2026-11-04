@@ -1,12 +1,35 @@
 import { useEffect, useState } from 'react'
 
-/** Pages of the site, kept in the URL hash so links can be shared: #/ (search), #/explore, #/explore/<id>. */
-export type Route = { page: 'search' } | { page: 'explore'; conceptId: number | null }
+/** Pages of the site, kept in the URL hash so links can be shared: #/ (search), #/explore[/<id>], #/library[/<id>]. */
+export type Route =
+    | { page: 'search' }
+    | { page: 'explore'; conceptId: number | null }
+    | { page: 'library'; bookId: number | null }
+    | { page: 'account' }
+    | { page: 'workspace'; tab: WorkspaceTab; id: number | null }
+
+export type WorkspaceTab = 'dashboard' | 'collections' | 'notes'
 
 export function parseHash(hash: string): Route {
-    const match = /^#\/explore(?:\/(\d+))?\/?$/.exec(hash)
-    if (match) return { page: 'explore', conceptId: match[1] ? Number(match[1]) : null }
+    const explore = /^#\/explore(?:\/(\d+))?\/?$/.exec(hash)
+    if (explore) return { page: 'explore', conceptId: explore[1] ? Number(explore[1]) : null }
+    const library = /^#\/library(?:\/(\d+))?\/?$/.exec(hash)
+    if (library) return { page: 'library', bookId: library[1] ? Number(library[1]) : null }
+    if (/^#\/account\/?$/.test(hash)) return { page: 'account' }
+    const workspace = /^#\/workspace(?:\/(collections|notes)(?:\/(\d+))?)?\/?$/.exec(hash)
+    if (workspace) {
+        return { page: 'workspace', tab: (workspace[1] as WorkspaceTab | undefined) ?? 'dashboard', id: workspace[2] ? Number(workspace[2]) : null }
+    }
     return { page: 'search' }
+}
+
+export function workspaceHref(tab: WorkspaceTab = 'dashboard', id?: number | null): string {
+    if (tab === 'dashboard') return '#/workspace'
+    return id ? `#/workspace/${tab}/${id}` : `#/workspace/${tab}`
+}
+
+export function libraryHref(bookId?: number | null): string {
+    return bookId ? `#/library/${bookId}` : '#/library'
 }
 
 export function exploreHref(conceptId?: number | null): string {

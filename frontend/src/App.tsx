@@ -1,8 +1,13 @@
 import { useCallback, useMemo, useState } from 'react'
-import { Network, Search, X } from 'lucide-react'
+import { Briefcase, Library, Network, Search, User, X } from 'lucide-react'
+import { AuthProvider } from './components/AuthProvider'
 import { Lightbox } from './components/Lightbox'
+import { AccountPage } from './pages/AccountPage'
 import { ExplorerPage } from './pages/ExplorerPage'
+import { LibraryPage } from './pages/LibraryPage'
 import { SearchPage } from './pages/SearchPage'
+import { WorkspacePage } from './pages/WorkspacePage'
+import { useAuth } from './lib/auth'
 import { useRoute } from './lib/route'
 import { ViewerContext } from './lib/viewer'
 import type { LightboxItem, Viewer } from './lib/viewer'
@@ -19,6 +24,24 @@ function NavLink({ href, active, children }: { href: string; active: boolean; ch
     >
       {children}
     </a>
+  )
+}
+
+function AccountLinks({ route }: { route: ReturnType<typeof useRoute> }) {
+  const { user } = useAuth()
+  return (
+    <>
+      {user && (
+        <NavLink href="#/workspace" active={route.page === 'workspace'}>
+          <Briefcase className="h-4 w-4" />
+          Workspace
+        </NavLink>
+      )}
+      <NavLink href="#/account" active={route.page === 'account'}>
+        <User className="h-4 w-4" />
+        {user ? user.name.split(' ')[0] || 'Account' : 'Sign in'}
+      </NavLink>
+    </>
   )
 }
 
@@ -49,6 +72,7 @@ function App() {
   )
 
   return (
+    <AuthProvider>
     <ViewerContext.Provider value={viewer}>
       <main className="min-h-screen bg-white text-zinc-950">
         <nav className="flex items-center justify-between gap-4 border-b border-zinc-200 px-4 md:px-6" aria-label="Main">
@@ -64,18 +88,28 @@ function App() {
               <Network className="h-4 w-4" />
               Explore
             </NavLink>
+            <NavLink href="#/library" active={route.page === 'library'}>
+              <Library className="h-4 w-4" />
+              Library
+            </NavLink>
+            <AccountLinks route={route} />
           </div>
         </nav>
 
         <div className={`w-full px-4 py-4 md:px-6 md:py-5 ${preview ? 'xl:grid xl:grid-cols-[minmax(0,1fr)_36vw] xl:gap-4' : ''}`}>
           <div className="min-w-0">
-            {/* Both pages stay mounted so switching tabs keeps the search results and the open concept. */}
+            {/* The pages stay mounted so switching tabs keeps the search results, the open concept and the shelf. */}
             <div hidden={route.page !== 'search'}>
               <SearchPage />
             </div>
             <div hidden={route.page !== 'explore'}>
               <ExplorerPage conceptId={route.page === 'explore' ? route.conceptId : null} active={route.page === 'explore'} />
             </div>
+            <div hidden={route.page !== 'library'}>
+              <LibraryPage bookId={route.page === 'library' ? route.bookId : null} active={route.page === 'library'} />
+            </div>
+            {route.page === 'account' && <AccountPage />}
+            {route.page === 'workspace' && <WorkspacePage tab={route.tab} id={route.id} />}
           </div>
 
           {preview && (
@@ -103,6 +137,7 @@ function App() {
         {lightbox && <Lightbox items={lightbox.items} index={lightbox.index} onIndex={setLightboxIndex} onClose={closeLightbox} />}
       </main>
     </ViewerContext.Provider>
+    </AuthProvider>
   )
 }
 

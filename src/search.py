@@ -8,6 +8,7 @@ import os
 import re
 import sys
 import time
+from contextvars import ContextVar
 from functools import lru_cache
 from typing import Callable, Dict, List, Optional, Tuple
 
@@ -172,6 +173,17 @@ def make_windowed_qa_runner(tokenizer, model, device) -> Callable[[str, str], Di
     return run_windowed_qa
 
 
+# Search inside one book (the library's "search in this book"). A context variable rather than a parameter, so every
+# retrieval path (typed, romanized, fallback) gets the filter; each search runs in its own thread context.
+_book_scope: ContextVar[Optional[int]] = ContextVar("osiss_book_scope", default=None)
+
+
+def scope_filters() -> List[Dict]:
+    """Filter clauses limiting retrieval to the current book, if a search is scoped to one."""
+    book_id = _book_scope.get()
+    return [{"term": {"book_id": book_id}}] if book_id is not None else []
+
+
 def exercise_exclusion() -> Optional[Dict]:
     """Bool clause hiding exercise chunks, or None when they are included."""
     if not settings.exclude_exercises:
@@ -198,17 +210,22 @@ def build_keyword_query(query_text: str, boost: float = 1.0) -> Dict:
         }
 
     query: Dict = {"must": [clause]}
+    filters = scope_filters()
     if settings.keyword_same_language and language in {"bn", "hi"}:
-        query["filter"] = [{"term": {"language_code": language}}]
+        filters.append({"term": {"language_code": language}})
+    if filters:
+        query["filter"] = filters
     query.update(exercise_exclusion() or {})
     return {"bool": query} if len(query) > 1 else clause
 
 
 def build_knn(query_vector: List[float], k: int, num_candidates: int) -> Dict:
     knn: Dict = {"field": "embedding", "query_vector": query_vector, "k": k, "num_candidates": num_candidates}
-    exclusion = exercise_exclusion()
-    if exclusion:
-        knn["filter"] = {"bool": exclusion}
+    clauses: Dict = dict(exercise_exclusion() or {})
+    if scope_filters():
+        clauses["filter"] = scope_filters()
+    if clauses:
+        knn["filter"] = {"bool": clauses}
     return knn
 
 
@@ -498,7 +515,18 @@ def diversify_candidates(candidates: List[Dict], limit: int) -> List[Dict]:
     return mmr_select(candidates, limit, settings.mmr_lambda)
 
 
-def search_and_extract(query: str, top_k: Optional[int] = None, timings: Optional[Dict[str, float]] = None) -> Dict:
+def search_and_extract(
+    query: str, top_k: Optional[int] = None, timings: Optional[Dict[str, float]] = None, book_id: Optional[int] = None
+) -> Dict:
+    """`_search_and_extract`, optionally limited to the chunks of one book."""
+    token = _book_scope.set(book_id)
+    try:
+        return _search_and_extract(query, top_k, timings)
+    finally:
+        _book_scope.reset(token)
+
+
+def _search_and_extract(query: str, top_k: Optional[int] = None, timings: Optional[Dict[str, float]] = None) -> Dict:
     """Full search pipeline from query embedding to extractive answer JSON.
 
     With `top_k` exactly that many results (at most); without it every hit scoring at least RESULT_RELATIVE_SCORE x
@@ -588,6 +616,7 @@ def search_and_extract(query: str, top_k: Optional[int] = None, timings: Optiona
                     "end": answer_end,
                 },
                 "source": {
+                    "book_id": src.get("book_id"),
                     "book_title": src.get("title"),
                     "author": src.get("author"),
                     "department": src.get("department"),

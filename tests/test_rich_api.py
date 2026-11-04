@@ -43,8 +43,8 @@ def client(tmp_path, monkeypatch):
     monkeypatch.setattr(load_control, "metrics", load_control.Metrics())
     monkeypatch.setattr(load_control, "_gate", None)
 
-    def fake_search(query, top_k, timings=None):
-        calls.append(top_k)
+    def fake_search(query, top_k, timings=None, book_id=None):
+        calls.append(top_k if book_id is None else (top_k, book_id))
         return {"query": query, "results": [{
             "quote": "The angle of incidence is always equal to the angle of reflection for a plane mirror.",
             "matched_paragraph": "Light travels in straight lines. The angle of incidence is always equal to the angle of "
@@ -108,3 +108,11 @@ def test_top_k_is_optional_and_passed_through(client):
     client.post("/api/search", json={"query": "lens", "top_k": 4})
     assert client.calls == [None, 4]  # no top_k: the pipeline applies the relative score threshold
     assert client.post("/api/search", json={"query": "x", "top_k": 11}).status_code == 422
+
+
+def test_book_scoped_search_is_passed_through_and_cached_separately(client):
+    client.post("/api/search/rich", json={"query": "mirror", "book_id": 3})
+    client.post("/api/search/rich", json={"query": "mirror"})
+    client.post("/api/search/rich", json={"query": "mirror", "book_id": 3})  # answered from the cache
+    assert client.calls == [(None, 3), None]
+    assert client.post("/api/search/rich", json={"query": "mirror", "book_id": 0}).status_code == 422

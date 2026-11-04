@@ -2,11 +2,12 @@ import { useEffect, useMemo, useState } from 'react'
 import { ArrowRight, BookOpen, ExternalLink, Quote } from 'lucide-react'
 import type { ConceptDetail, LinkDetail, Neighbour } from '../../types/concepts'
 import { getLink } from '../../lib/conceptsApi'
-import { exploreHref, navigate } from '../../lib/route'
+import { exploreHref, libraryHref, navigate } from '../../lib/route'
 import { orderPhrase, relationPhrase } from '../../lib/relations'
 import { figureLightboxItem } from '../../lib/results'
 import { useViewer } from '../../lib/viewer'
 import { FigureView } from '../blocks/MediaBlocks'
+import { SaveButton } from '../SaveButton'
 import { ConceptGraph } from './ConceptGraph'
 
 function escapeRegExp(value: string): string {
@@ -163,7 +164,12 @@ export function ConceptView({ concept }: { concept: ConceptDetail }) {
         <div className="space-y-8">
             <header className="space-y-2 border-b-2 border-zinc-950 pb-4">
                 <p className="text-xs uppercase tracking-[0.18em] text-zinc-500">Concept</p>
-                <h1 className="text-3xl font-semibold tracking-tight md:text-4xl">{concept.label}</h1>
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                    <h1 className="text-3xl font-semibold tracking-tight md:text-4xl">{concept.label}</h1>
+                    <div className="pt-2 text-sm">
+                        <SaveButton draft={{ kind: 'concept', concept_key: concept.label }} label="Save concept" />
+                    </div>
+                </div>
                 {otherNames.length > 0 && (
                     <p className="flex flex-wrap gap-2 text-sm">
                         <span className="text-zinc-500">Also:</span>
@@ -240,7 +246,9 @@ export function ConceptView({ concept }: { concept: ConceptDetail }) {
                     {concept.books.map((book) => (
                         <li key={book.book_id} className="flex flex-col gap-2 p-3 md:flex-row md:items-start md:justify-between">
                             <div className="min-w-0">
-                                <p className="font-medium">{book.title}</p>
+                                <a href={libraryHref(book.book_id)} className="font-medium underline-offset-4 hover:underline">
+                                    {book.title}
+                                </a>
                                 <p className="text-xs text-zinc-500">
                                     {book.page_count} page{book.page_count === 1 ? '' : 's'}
                                 </p>

@@ -5,6 +5,9 @@ import type { LightboxItem } from '../../lib/viewer'
 import { KIND_LABEL, figureGallery, figureLightboxItem, hasLead, sourceLabel } from '../../lib/results'
 import { FigureView, FormulaStrip, PageCard, TableView } from '../blocks/MediaBlocks'
 import { LeadBlock, MatchedParagraph, ResultCard, SourceFooter } from '../ResultCard'
+import { FlashcardTarget } from '../FlashcardMenu'
+import { cardFromResult } from '../../lib/flashcardText'
+import { SearchQueryContext, useSearchQuery } from '../../lib/searchQuery'
 
 const LAYOUT_TITLE: Record<Layout['kind'], string> = {
     answer: 'Best answer',
@@ -39,7 +42,9 @@ function BigQuote({ result }: { result: SearchResult }) {
 }
 
 function HeroFrame({ label, result, children }: { label: string; result: SearchResult; children: ReactNode }) {
+    const query = useSearchQuery()
     return (
+        <FlashcardTarget getCard={() => cardFromResult(result, query)}>
         <section className="border-2 border-zinc-950 bg-white">
             <header className="flex flex-wrap items-center justify-between gap-2 bg-zinc-950 px-4 py-2 text-xs uppercase tracking-[0.18em] text-white">
                 <span>{label}</span>
@@ -50,6 +55,7 @@ function HeroFrame({ label, result, children }: { label: string; result: SearchR
                 <SourceFooter result={result} />
             </div>
         </section>
+        </FlashcardTarget>
     )
 }
 
@@ -207,7 +213,15 @@ function AnswerLayout({ results, hero, label }: { results: SearchResult[]; hero:
 }
 
 /** Arranges the hits according to the layout the API suggested (see src/layout.py). */
-export function ResultsView({ results, layout }: { results: SearchResult[]; layout: Layout }) {
+export function ResultsView({ results, layout, query = '' }: { results: SearchResult[]; layout: Layout; query?: string }) {
+    return (
+        <SearchQueryContext.Provider value={query}>
+            <LaidOut results={results} layout={layout} />
+        </SearchQueryContext.Provider>
+    )
+}
+
+function LaidOut({ results, layout }: { results: SearchResult[]; layout: Layout }) {
     const hero = layout.hero !== null && layout.hero < results.length ? layout.hero : 0
     switch (layout.kind) {
         case 'visual':

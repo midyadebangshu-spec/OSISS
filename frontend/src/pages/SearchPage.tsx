@@ -4,6 +4,8 @@ import { Search } from 'lucide-react'
 import { ResultSkeleton } from '../components/ResultSkeleton'
 import { ResultsView } from '../components/layouts/ResultsView'
 import { searchRecords } from '../lib/searchApi'
+import { useAuth } from '../lib/auth'
+import { recordActivity } from '../lib/workspaceApi'
 import type { Layout, SearchResult } from '../types/search'
 
 const EXAMPLE_QUERIES = [
@@ -17,6 +19,7 @@ const EXAMPLE_QUERIES = [
 const EMPTY_LAYOUT: Layout = { kind: 'empty', hero: null, intents: [] }
 
 export function SearchPage() {
+    const { user } = useAuth()
     const [query, setQuery] = useState('')
     const [results, setResults] = useState<SearchResult[]>([])
     const [layout, setLayout] = useState<Layout>(EMPTY_LAYOUT)
@@ -40,6 +43,7 @@ export function SearchPage() {
             const data = await searchRecords(cleaned)
             setResults(data.results)
             setLayout(data.layout)
+            if (user) recordActivity('search', cleaned)
         } catch (searchError) {
             setResults([])
             setLayout(EMPTY_LAYOUT)
@@ -148,7 +152,7 @@ export function SearchPage() {
                     <div className="border-2 border-zinc-950 bg-white p-4 text-sm text-zinc-800">No matching records found for this query.</div>
                 )}
 
-                {!isLoading && !error && results.length > 0 && <ResultsView results={results} layout={layout} />}
+                {!isLoading && !error && results.length > 0 && <ResultsView results={results} layout={layout} query={query} />}
             </div>
         </section>
     )

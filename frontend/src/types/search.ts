@@ -56,6 +56,8 @@ export type SearchResult = {
     page?: PageSnapshot | null
     /** Concepts the hit names, for the Context Explorer. */
     concepts: { id: number; label: string; book_count: number }[]
+    /** The book's library page (rich results only). */
+    book_id?: number | null
 }
 
 export type LayoutKind = 'answer' | 'visual' | 'table' | 'compare' | 'steps' | 'empty'

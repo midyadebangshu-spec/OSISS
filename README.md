@@ -247,13 +247,17 @@ Every step names the setting that controls it (see [section 12](#12-configuratio
 |---|---|
 | `GET /health` | liveness check (`{status, version, admin_enabled}`) |
 | `POST /api/search` `{query, top_k?}` | returns `{exact_quote, book_title, author, department, page_number, pdf_link, paragraph_text, answer_text}` per result |
-| `POST /api/search/rich` `{query, top_k?}` | the same fields plus `kind`, `blocks`, `figures`, `tables`, `formulas`, `page` per result and a top-level `layout` (see [8.10](#810-rich-results-figures-tables-equations-and-layouts)) |
+| `POST /api/search/rich` `{query, top_k?, book_id?}` | the same fields plus `kind`, `blocks`, `figures`, `tables`, `formulas`, `page` per result and a top-level `layout` (see [8.10](#810-rich-results-figures-tables-equations-and-layouts)) |
+| `GET /api/library` | every book: title, author, subject, language, cover (first non-blank page), page / figure / concept counts |
+| `GET /api/library/<id>` | one book: the above plus the PDF's table of contents, its key concepts and captioned figures |
+| `GET /api/library/<id>/pages?start=&count=` | page images for browsing (built on demand when missing) |
 | `GET /api/concepts?q=` | Context Explorer: concepts matching `q` (any language), or the best-defined ones without `q` |
 | `GET /api/concepts/<id>` | a concept: names, books and pages, definitions per book, neighbours with relation and order, figures |
 | `GET /api/concepts/<a>/links/<b>` | the evidence sentences (book, page) behind a link |
 | `GET /data/assets/<hash>/<name>.webp` | figure, table and equation crops and page images cut from the PDFs (same access rule as PDFs) |
 | `GET /data/pdfs/<file>.pdf` | PDFs from `PDF_DIR` only (opened by the page viewer at `#page=N`) |
 | `GET /ready` | load-balancer health check: 200 when this copy can answer searches, else 503 with the failing check |
+| `/api/auth/*`, `/api/workspace/*` | scholar accounts and their private workspace (cookie session; see [section 11.6.9](#1169-scholar-accounts-and-passwords)) |
 | `/api/admin/*` | admin API for the desktop admin app, behind `ADMIN_TOKEN` (see [section 11](#11-using-the-admin-app-step-by-step)) |
 
 `/api/search` and `/data` follow the search access mode chosen in the admin app: **open** (anyone who can reach the server) or
@@ -684,6 +688,24 @@ a book prints the English term; "संक्षारण" and "corrosion" stay 
 the transliteration model, which can miss ("protisoron" -> "প্রতিচরণ").
 
 The API caches the concept list for 60 s, so a rebuild shows up within a minute (concept ids change on a rebuild).
+
+### 8.13 Library
+
+The **Library** tab (`#/library`) shows every book as a cover (its first non-blank page, from the page-asset cache) on
+shelves by subject, filterable by language, subject and title / author, sortable by title, size or date added. A book's
+page (`#/library/<id>`) has its details and counts (pages, passages, figures, tables, concepts), Read (the PDF viewer)
+and Download, the PDF's own table of contents linked to pages (books with bookmarks: the OpenStax books, Balagurusamy,
+Open Data Structures, English Literature, Vigyan 10), **search in this book** (`book_id` on `/api/search/rich`: a
+`book_id` filter on both the kNN and the BM25 query, part of the answer-cache key; searches without it are unchanged),
+its key concepts (linked to the Explorer), its captioned figures, and a page browser (page images in batches of 24).
+Book titles in search results and on concept pages link to the book.
+
+The code is `src/library.py` (page counts and outlines read from the PDF and figure counts from the asset cache, cached
+per content hash for 10 minutes) and `src/library_api.py`; the frontend is `pages/LibraryPage.tsx` and `pages/BookPage.tsx`.
+
+Book details come from the database (fix them in the admin app). Titles guessed from file names were poor for half the
+corpus ("DATA / STRUCTURE", "Pages / from", "Class / X"), so they were corrected from each book's opening pages through
+the admin metadata path (PostgreSQL and Elasticsearch), and `books.language_code` was filled for the older books.
 
 ### 8.9 Eval-set growth over the project
 
@@ -1192,6 +1214,23 @@ curl -X POST https://ossis.com/api/search -H 'Content-Type: application/json' \
 
 <img src="docs/images/admin/lockout.png" width="480" alt="Locked after too many wrong passkeys">
 
+#### 11.6.9 Scholar accounts and passwords
+
+Scholars can create an account on the website (**Sign in** in the top bar) to save passages from search results, file them
+in collections, write notes (link a concept with `[[double brackets]]`) and see a dashboard. Search stays open without an
+account. Everything a scholar saves is private to them; **Download everything (JSON)** on their account page exports it.
+
+In the admin app, **Scholars** lists the accounts with how much each has saved, and lets you:
+
+* **Reset password**: sets a temporary password, shown once. The scholar is signed out everywhere and must choose their own
+  at the next sign-in. There is no email, so this is the only way back in.
+* **Switch an account off** (blocks sign-in, keeps the data) or **delete** it (removes the account and everything saved).
+* **New account**: the way to add scholars when `REGISTRATION_MODE=closed`.
+
+Passwords are stored as scrypt hashes; login sessions are a 30-day HttpOnly cookie; eight wrong passwords for one address
+and email lock further tries for 15 minutes. Behind HTTPS, set `PUBLIC_BASE_URL` to the `https://` address so the cookie is
+marked `Secure`.
+
 ### 11.7 How the app and the server are protected
 
 * **The app on a computer** is protected by the passkey. Saved servers and their admin tokens are encrypted with AES-256-GCM under
@@ -1455,6 +1494,7 @@ All settings are environment variables, read at import time into the frozen `Set
 | Variable | Default | Meaning |
 |---|---|---|
 | `ADMIN_TOKEN` | *(empty)* | Enables `/api/admin/*` and the in-process ingester; `setup.sh` generates one into `.env` |
+| `REGISTRATION_MODE` | `open` | `open`: anyone can create a scholar account on the website; `closed`: only the admin creates accounts |
 | `ADMIN_ALLOWED_IPS` | *(empty = any)* | Comma-separated IPs / CIDRs allowed to call the admin API |
 | `UPLOAD_DIR` | `./data/uploads` | Staging folder for uploaded PDFs |
 | `UPLOAD_MAX_MB` | `500` | Largest accepted upload |
@@ -1533,6 +1573,7 @@ src/
   concepts.py              Context Explorer graph: candidate terms, gloss merging, mentions, links, relations
   concept_store.py         concept graph storage (PostgreSQL) and lookups; concept_api.py serves /api/concepts
   build_concepts.py        rebuilds the concept graph from the ingested books
+  library.py               the website's library: covers, contents, counts, page images (library_api.py serves it)
   translit.py              romanized-query detection and IndicXlit transliteration
   ingest.py                ingestion pipeline (watcher or --once, --only)
   utils.py                 PDF extraction, OCR fallback, chunking, language and exercise heuristics
@@ -1550,7 +1591,7 @@ frontend/                  React + TypeScript + Tailwind UI
   src/components/ResultCard.tsx   result card: lead block, highlighted paragraph, figures, tables, equations, page
   src/components/blocks/          definition / list / code views, figure / table / equation / page views
   src/components/Lightbox.tsx     full-screen figure and page viewer
-  src/pages/                      SearchPage and ExplorerPage (hash routes #/ and #/explore/<id>)
+  src/pages/                      SearchPage, ExplorerPage, LibraryPage, BookPage (hash routes #/, #/explore/<id>, #/library/<id>)
   src/components/explorer/        concept view and graph (dependency-free force layout in src/lib/forceLayout.ts)
   src/lib/searchApi.ts            API client and response normalisation
   src/lib/textFormat.ts           display cleanup and quote/answer highlighting
@@ -1652,6 +1693,27 @@ Running the evaluation while the API server is up can run out of GPU memory on a
 6. ~~**Scaling out for heavy public traffic**~~ — done: several API copies sharing state through PostgreSQL, S3 storage,
    optional Redis, and an AWS deployment ([11.9](#119-running-several-copies)). Next: apply the AWS configuration to a real
    account and measure real GPU throughput.
+7. **Academic workspace** (phase 1 built: see [11.6.9](#1169-scholar-accounts-and-passwords)). Personal, private workspaces on top of search, the Explorer and the
+   library, built around one *evidence item* model: every saved passage, answer, definition, figure, table, page, concept
+   link or note keeps its source (book, page, quote, content hash), so collections, notes, the board and drafts all
+   reference the same items. Modules: Dashboard (continue reading, recent searches, projects, what is new), Research
+   Projects (a question + a set of books; project-scoped search generalises today's search-in-one-book), Reading Library
+   (reader with highlights and progress), Notes & Knowledge (`[[concept]]` links and backlinks), Collections ("Save"
+   everywhere), References (APA / MLA / Chicago / IEEE, BibTeX / RIS), Research Board (claims, evidence and concepts with
+   supports / contradicts links, seeded from the concept graph), Writing Studio (drag evidence in to insert quote +
+   citation, automatic bibliography, Word / PDF / LaTeX export).
+   Principles: stay extractive and check every quote in a draft against its source page (academic integrity); cite
+   printed page numbers, not PDF positions; add publisher / edition / year / ISBN to book metadata first; bilingual
+   glossaries and citations; private by default with full export and delete. Extras: teacher reading lists and
+   assignments, flashcards from the books' definitions with spaced repetition, saved searches that alert when a new book
+   answers them, shared projects later.
+   Decided: users are scholars, accounts live on the server (PostgreSQL), registration is open, passwords are reset by the
+   admin (no email), sharing projects comes later. **Phase 1 is built**: accounts, evidence items, collections, notes,
+   dashboard (continue reading, recent searches), JSON export, and the admin app's Scholars page. Not built yet: projects,
+   the reader with highlights, printed page numbers, references, the writing studio, the board, sharing.
+   Phases: (1) accounts in PostgreSQL (managed from the admin app) + evidence items + collections + notes + dashboard;
+   (2) projects with scoped search, the reader with highlights, metadata and printed pages; (3) references and the
+   writing studio; (4) research board, collaboration, study tools.
 
 ---
 

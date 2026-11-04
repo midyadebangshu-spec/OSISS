@@ -272,3 +272,22 @@ def test_windowed_qa_with_sentencepiece_tokenizer_and_tiny_model(tmp_path):
     assert context[result["start"] : result["end"]] == result["answer"]
     assert result["answer"] == result["answer"].strip() and result["answer"]
     assert 0.0 < result["score"] <= 1.0
+
+
+def test_book_scope_filters_both_searches(monkeypatch, override):
+    override(hybrid_mode="rrf", retrieval_candidates=5, exclude_exercises=True, keyword_same_language=True)
+    es = FakeES(dense=[hit("a", "a.pdf", 1, "Stacks are lists.")], keyword=[])
+    monkeypatch.setattr(search, "get_es_client", lambda: es)
+    monkeypatch.setattr(search, "get_models", lambda: (FakeEmbedder(), lambda q, c: {"answer": c[:1], "score": 0.5, "start": 0, "end": 1}))
+    monkeypatch.setattr(search, "get_reranker", lambda: FakeReranker())
+
+    search.search_and_extract("what is a stack", book_id=7)
+    knn_call = next(call for call in es.calls if "knn" in call)
+    keyword_call = next(call for call in es.calls if "query" in call)
+    assert {"term": {"book_id": 7}} in knn_call["knn"]["filter"]["bool"]["filter"]
+    assert knn_call["knn"]["filter"]["bool"]["must_not"] == [{"term": {"is_exercise": True}}]
+    assert {"term": {"book_id": 7}} in keyword_call["query"]["bool"]["filter"]
+
+    es.calls.clear()
+    search.search_and_extract("what is a stack")  # the scope does not leak into the next search
+    assert all("book_id" not in str(call) for call in es.calls)

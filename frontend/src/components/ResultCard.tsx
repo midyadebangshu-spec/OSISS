@@ -3,8 +3,13 @@ import type { SearchResult } from '../types/search'
 import { buildParagraphSegments } from '../lib/textFormat'
 import type { Segment } from '../lib/textFormat'
 import { KIND_LABEL, figureGallery, hasLead, sourceLabel } from '../lib/results'
-import { exploreHref } from '../lib/route'
+import { exploreHref, libraryHref } from '../lib/route'
 import { useViewer } from '../lib/viewer'
+import { cardFromResult } from '../lib/flashcardText'
+import { useSearchQuery } from '../lib/searchQuery'
+import { FlashcardTarget } from './FlashcardMenu'
+import { SaveButton } from './SaveButton'
+import { evidenceFromResult } from '../lib/workspaceDraft'
 import { CodeView, DefinitionView, ListView } from './blocks/ContentBlocks'
 import { FigureView, FormulaStrip, PageCard, TableView } from './blocks/MediaBlocks'
 
@@ -85,13 +90,20 @@ export function ConceptLinks({ result }: { result: SearchResult }) {
 export function SourceFooter({ result }: { result: SearchResult }) {
     const { togglePage, isPageOpen } = useViewer()
     const open = isPageOpen(result.pdf_link, result.page_number)
+    const draft = evidenceFromResult(result)
     return (
         <>
         <ConceptLinks result={result} />
         <div className="flex flex-col gap-3 border-t border-zinc-300 pt-3 text-sm md:flex-row md:items-end md:justify-between">
             <div className="min-w-0">
                 <p className="truncate font-semibold text-zinc-950" title={result.book_title}>
-                    {result.book_title}
+                    {result.book_id ? (
+                        <a href={libraryHref(result.book_id)} className="underline-offset-4 hover:underline">
+                            {result.book_title}
+                        </a>
+                    ) : (
+                        result.book_title
+                    )}
                 </p>
                 <p className="text-zinc-600">
                     {result.author}
@@ -100,6 +112,7 @@ export function SourceFooter({ result }: { result: SearchResult }) {
                 </p>
             </div>
             <div className="flex shrink-0 flex-wrap items-center gap-4">
+                {draft && <SaveButton draft={draft} />}
                 <button
                     type="button"
                     onClick={() => togglePage({ pdfLink: result.pdf_link, pageNumber: result.page_number, title: result.book_title })}
@@ -134,8 +147,10 @@ export function ResultCard({ result, compact = false, hideFigures = false, hideT
     const tables = hideTables ? [] : result.tables.filter((table) => table.primary)
     const gallery = figureGallery(result)
     const showPage = !compact && result.page && figures.length === 0
+    const query = useSearchQuery()
 
     return (
+        <FlashcardTarget getCard={() => cardFromResult(result, query)}>
         <article className="flex flex-col gap-4 border-2 border-zinc-950 bg-white p-4 md:p-5">
             <div className="flex items-center justify-between gap-2 text-xs uppercase tracking-[0.18em] text-zinc-500">
                 <span className="border border-zinc-950 px-2 py-0.5 text-zinc-950">{KIND_LABEL[result.kind]}</span>
@@ -177,6 +192,7 @@ export function ResultCard({ result, compact = false, hideFigures = false, hideT
 
             <SourceFooter result={result} />
         </article>
+        </FlashcardTarget>
     )
 }
 

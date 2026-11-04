@@ -231,7 +231,7 @@ def client(override, monkeypatch):
     monkeypatch.setattr(load_control, "_gate", None)
     calls = []
 
-    def fake_search(query, top_k, timings=None):
+    def fake_search(query, top_k, timings=None, book_id=None):
         calls.append(query)
         if timings is not None:
             timings.update(retrieve=0.01, rerank=0.02)

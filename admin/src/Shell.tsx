@@ -7,6 +7,7 @@ import {
   Server,
   Settings as SettingsIcon,
   ShieldCheck,
+  Users,
   Workflow,
 } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
@@ -24,9 +25,10 @@ import { Ingestion } from './pages/Ingestion.tsx'
 import { SearchConsole } from './pages/SearchConsole.tsx'
 import { Security } from './pages/Security.tsx'
 import { Servers } from './pages/Servers.tsx'
+import { ScholarsPage } from './pages/Scholars.tsx'
 import { SettingsPage } from './pages/Settings.tsx'
 
-type PageKey = 'dashboard' | 'books' | 'ingestion' | 'search' | 'settings' | 'access' | 'servers' | 'security'
+type PageKey = 'dashboard' | 'books' | 'ingestion' | 'search' | 'settings' | 'access' | 'scholars' | 'servers' | 'security'
 
 const SERVER_PAGES: Array<{ key: PageKey; label: string; icon: ReactNode }> = [
   { key: 'dashboard', label: 'Dashboard', icon: <Gauge className="h-4 w-4" /> },
@@ -35,6 +37,7 @@ const SERVER_PAGES: Array<{ key: PageKey; label: string; icon: ReactNode }> = [
   { key: 'search', label: 'Search console', icon: <Search className="h-4 w-4" /> },
   { key: 'settings', label: 'Search settings', icon: <SettingsIcon className="h-4 w-4" /> },
   { key: 'access', label: 'Access & API keys', icon: <Globe className="h-4 w-4" /> },
+  { key: 'scholars', label: 'Scholars', icon: <Users className="h-4 w-4" /> },
 ]
 
 const APP_PAGES: Array<{ key: PageKey; label: string; icon: ReactNode }> = [
@@ -174,6 +177,7 @@ export function Shell({ vault, onLock, onVaultChange }: { vault: VaultStatus; on
       search: <SearchConsole />,
       settings: <SettingsPage />,
       access: <AccessPage onChange={() => profile && checkConnection(profile)} />,
+      scholars: <ScholarsPage />,
     }
     content = pages[activePage]
   }

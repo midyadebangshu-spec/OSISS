@@ -119,6 +119,8 @@ class Settings:
     admin_token: str = os.getenv("ADMIN_TOKEN", "")
     # Optional comma-separated IPs / CIDRs allowed to call the admin API (empty = any).
     admin_allowed_ips: str = os.getenv("ADMIN_ALLOWED_IPS", "")
+    # Scholar accounts: "open" lets anyone register on the website; "closed" means only the admin creates accounts.
+    registration_mode: str = os.getenv("REGISTRATION_MODE", "open").lower()
     # Uploaded PDFs are staged here until ingestion moves them into PDF_DIR.
     upload_dir: str = os.getenv("UPLOAD_DIR", "./data/uploads")
     upload_max_mb: int = int(os.getenv("UPLOAD_MAX_MB", "500"))

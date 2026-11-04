@@ -21,14 +21,17 @@ CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
 if CURRENT_DIR not in sys.path:
     sys.path.insert(0, CURRENT_DIR)
 
+import accounts_api
 import admin
 import admin_api
 import concept_api
 import layout
+import library_api
 import load_control
 import page_assets
 import replica
 import runtime_config
+import workspace_api
 from config import settings
 from db_pool import db
 from search import search_and_extract
@@ -43,7 +46,7 @@ FRONTEND_DIST = os.path.join(PROJECT_ROOT, "frontend", "dist")
 os.makedirs(DATA_DIR, exist_ok=True)
 
 # Paths the search-access rule (open / key) and CORS apply to. Admin routes have their own token auth.
-PUBLIC_PREFIXES = ("/api/search", "/api/concepts", "/data/")
+PUBLIC_PREFIXES = ("/api/search", "/api/concepts", "/api/library", "/data/")
 
 
 def ensure_schema(wait_seconds: float = 0) -> bool:
@@ -116,6 +119,9 @@ admin_api.context.es_client = lambda: __import__("search").get_es_client()
 admin_api.context.search = lambda query, top_k, timings: search_and_extract(query, top_k, timings=timings)
 app.include_router(admin_api.router)
 app.include_router(concept_api.router)
+app.include_router(library_api.router)
+app.include_router(accounts_api.router)
+app.include_router(workspace_api.router)
 
 
 def same_site(request: Request) -> bool:
@@ -268,6 +274,8 @@ class SearchRequest(BaseModel):
     query: str = Field(..., min_length=1)
     # Omitted: every hit scoring at least RESULT_RELATIVE_SCORE x the best one, up to MAX_RESULTS.
     top_k: Optional[int] = Field(default=None, ge=1, le=10)
+    # Search inside one book (the library's "search in this book").
+    book_id: Optional[int] = Field(default=None, ge=1)
 
 
 class SearchResultItem(BaseModel):
@@ -301,6 +309,8 @@ class RichResultItem(SearchResultItem):
     page: Optional[Dict[str, Any]] = None
     # Concepts the hit names, for the Context Explorer ({id, label, book_count}).
     concepts: List[Dict[str, Any]] = Field(default_factory=list)
+    # The book's library page id (the plain /api/search contract stays without it).
+    book_id: Optional[int] = None
 
 
 class LayoutInfo(BaseModel):
@@ -371,14 +381,18 @@ async def run_search(payload: SearchRequest, request: Request):
         return refuse(429, "Too many searches; please slow down.", wait)
 
     started = time.perf_counter()
-    cache_key = load_control.cache.key(payload.query, payload.top_k)
+    # A book-scoped search is a different question: the book is part of the cache key.
+    scope = payload.top_k if payload.book_id is None else (payload.top_k, "book", payload.book_id)
+    cache_key = load_control.cache.key(payload.query, scope)
     result = load_control.cache.get(cache_key)
     cached = result is not None
     timings: Dict[str, float] = {}
     if not cached:
         try:
             result = await load_control.gate().run(
-                lambda: run_in_threadpool(search_and_extract, payload.query, payload.top_k, timings=timings)
+                lambda: run_in_threadpool(
+                    search_and_extract, payload.query, payload.top_k, timings=timings, book_id=payload.book_id
+                )
             )
         except load_control.Busy as exc:
             return refuse(503, str(exc), exc.retry_after)
@@ -440,7 +454,9 @@ async def api_search_rich(payload: SearchRequest, request: Request):
         ]
     )
     results = [
-        RichResultItem(**map_result(item).model_dump(), **extra, concepts=found)
+        RichResultItem(
+            **map_result(item).model_dump(), **extra, concepts=found, book_id=item.get("source", {}).get("book_id")
+        )
         for item, extra, found in zip(items, rich, named)
     ]
     return RichSearchResponse(query=query, layout=LayoutInfo(**layout_info), results=results)

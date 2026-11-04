@@ -195,3 +195,15 @@ export type ConsoleResponse = {
   timings: Record<string, number>
   results: ConsoleResult[]
 }
+
+export type Scholar = {
+  id: number
+  email: string
+  name: string
+  must_change_password: boolean
+  disabled: boolean
+  created_at: string | null
+  last_login_at: string | null
+  evidence_count: number
+  note_count: number
+}

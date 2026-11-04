@@ -68,6 +68,7 @@ function normalizeResult(item: ApiResult): SearchResult {
         formulas: item.formulas ?? [],
         page: item.page ?? null,
         concepts: item.concepts ?? [],
+        book_id: item.book_id ?? null,
     }
 }
 
@@ -84,18 +85,19 @@ function normalizeResponse(payload: ApiResponse, query: string): SearchResponse 
     }
 }
 
-async function post(path: string, query: string): Promise<Response> {
+async function post(path: string, query: string, bookId?: number): Promise<Response> {
     return fetch(path, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ query }),
+        body: JSON.stringify(bookId ? { query, book_id: bookId } : { query }),
     })
 }
 
-export async function searchRecords(query: string): Promise<SearchResponse> {
+/** Search the library, or (with `bookId`) only inside one book. */
+export async function searchRecords(query: string, bookId?: number): Promise<SearchResponse> {
     try {
-        let response = await post('/api/search/rich', query)
-        if (response.status === 404) {
+        let response = await post('/api/search/rich', query, bookId)
+        if (response.status === 404 && !bookId) {
             // Older API without rich results: plain answers, laid out as a list.
             response = await post('/api/search', query)
         }

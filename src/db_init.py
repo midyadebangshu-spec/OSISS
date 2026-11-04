@@ -159,6 +159,86 @@ CREATE TABLE IF NOT EXISTS concept_figures (
     height INT
 );
 CREATE INDEX IF NOT EXISTS idx_concept_figures_concept ON concept_figures(concept_id);
+
+-- Scholar accounts and their workspace (src/accounts.py, src/workspace.py). Everything a scholar saves cascades away
+-- with the account.
+CREATE TABLE IF NOT EXISTS users (
+    id SERIAL PRIMARY KEY,
+    email TEXT NOT NULL UNIQUE,
+    name TEXT NOT NULL DEFAULT '',
+    password_hash TEXT NOT NULL,
+    must_change_password BOOLEAN NOT NULL DEFAULT FALSE,
+    disabled BOOLEAN NOT NULL DEFAULT FALSE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    last_login_at TIMESTAMPTZ
+);
+CREATE TABLE IF NOT EXISTS user_sessions (
+    token_hash TEXT PRIMARY KEY,
+    user_id INT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    expires_at TIMESTAMPTZ NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_user_sessions_user ON user_sessions(user_id);
+CREATE TABLE IF NOT EXISTS user_login_failures (
+    key TEXT NOT NULL,
+    at DOUBLE PRECISION NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_user_login_failures ON user_login_failures(key, at);
+
+-- One saved piece of evidence: a passage, definition, figure, table, page or concept, with where it came from.
+-- title/author are copied so the citation survives if the book's metadata is edited or the book is deleted.
+CREATE TABLE IF NOT EXISTS evidence_items (
+    id BIGSERIAL PRIMARY KEY,
+    owner_id INT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    kind TEXT NOT NULL,
+    book_id INT REFERENCES books(id) ON DELETE SET NULL,
+    book_title TEXT,
+    book_author TEXT,
+    page_number INT,
+    quote TEXT NOT NULL DEFAULT '',
+    content_hash TEXT NOT NULL,
+    concept_key TEXT,
+    meta JSONB NOT NULL DEFAULT '{}'::jsonb,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_evidence_unique
+    ON evidence_items(owner_id, kind, COALESCE(book_id, 0), COALESCE(page_number, 0), content_hash);
+CREATE INDEX IF NOT EXISTS idx_evidence_owner ON evidence_items(owner_id, created_at DESC);
+CREATE TABLE IF NOT EXISTS collections (
+    id BIGSERIAL PRIMARY KEY,
+    owner_id INT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    description TEXT NOT NULL DEFAULT '',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_collections_name ON collections(owner_id, LOWER(name));
+CREATE TABLE IF NOT EXISTS collection_items (
+    collection_id BIGINT NOT NULL REFERENCES collections(id) ON DELETE CASCADE,
+    evidence_id BIGINT NOT NULL REFERENCES evidence_items(id) ON DELETE CASCADE,
+    added_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (collection_id, evidence_id)
+);
+CREATE INDEX IF NOT EXISTS idx_collection_items_evidence ON collection_items(evidence_id);
+CREATE TABLE IF NOT EXISTS notes (
+    id BIGSERIAL PRIMARY KEY,
+    owner_id INT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    title TEXT NOT NULL DEFAULT '',
+    body TEXT NOT NULL DEFAULT '',
+    evidence_id BIGINT REFERENCES evidence_items(id) ON DELETE SET NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_notes_owner ON notes(owner_id, updated_at DESC);
+-- What the dashboard shows as "recent searches" and "continue reading".
+CREATE TABLE IF NOT EXISTS user_activity (
+    owner_id INT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    kind TEXT NOT NULL,
+    ref TEXT NOT NULL,
+    label TEXT NOT NULL,
+    book_id INT REFERENCES books(id) ON DELETE CASCADE,
+    at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (owner_id, kind, ref)
+);
 """
 
 

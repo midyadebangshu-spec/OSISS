@@ -22,6 +22,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, Uplo
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
+import accounts
 import admin
 import load_control
 import runtime_config
@@ -647,6 +648,78 @@ def delete_key(client_id: int) -> Dict[str, Any]:
     except admin.AdminError as exc:
         _fail(exc)
     return {"deleted": client_id}
+
+
+# --- scholar accounts ---------------------------------------------------------------------------------------------
+
+
+class NewUser(BaseModel):
+    email: str = Field(..., max_length=320)
+    password: str = Field(..., max_length=accounts.MAX_PASSWORD)
+    name: Optional[str] = Field(default=None, max_length=200)
+
+
+class UserPatch(BaseModel):
+    disabled: bool
+
+
+def _account_fail(exc: accounts.AccountError):
+    raise HTTPException(exc.status, str(exc)) from exc
+
+
+@router.get("/users")
+def list_users() -> Dict[str, Any]:
+    with db() as connection:
+        return {"users": accounts.list_users(connection), "registration": settings.registration_mode}
+
+
+@router.post("/users")
+def create_user(payload: NewUser) -> Dict[str, Any]:
+    """Create an account (the way to add scholars when REGISTRATION_MODE=closed); they must set their own password."""
+    try:
+        with db() as connection:
+            user = accounts.create_user(
+                connection, payload.email, payload.password, payload.name, must_change_password=True
+            )
+            connection.commit()
+    except accounts.AccountError as exc:
+        _account_fail(exc)
+    return user
+
+
+@router.patch("/users/{user_id}")
+def update_user(user_id: int, payload: UserPatch) -> Dict[str, Any]:
+    try:
+        with db() as connection:
+            accounts.set_disabled(connection, user_id, payload.disabled)
+            connection.commit()
+    except accounts.AccountError as exc:
+        _account_fail(exc)
+    return {"id": user_id, "disabled": payload.disabled}
+
+
+@router.post("/users/{user_id}/reset-password")
+def reset_user_password(user_id: int) -> Dict[str, Any]:
+    """New temporary password, shown once; the scholar is signed out everywhere and must choose their own."""
+    try:
+        with db() as connection:
+            temporary = accounts.admin_reset_password(connection, user_id)
+            connection.commit()
+    except accounts.AccountError as exc:
+        _account_fail(exc)
+    return {"id": user_id, "temporary_password": temporary}
+
+
+@router.delete("/users/{user_id}")
+def delete_user(user_id: int) -> Dict[str, Any]:
+    """Deletes the account and everything the scholar saved."""
+    try:
+        with db() as connection:
+            accounts.delete_user(connection, user_id)
+            connection.commit()
+    except accounts.AccountError as exc:
+        _account_fail(exc)
+    return {"deleted": user_id}
 
 
 # --- search console -----------------------------------------------------------------------------------------------

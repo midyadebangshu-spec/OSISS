@@ -211,3 +211,23 @@ export type Scholar = {
   evidence_count: number
   note_count: number
 }
+
+export type WebsiteBuild = {
+  state: 'idle' | 'running' | 'ok' | 'failed'
+  message: string
+  started_at: number | null
+  finished_at: number | null
+  log: string[]
+}
+
+export type WebsiteStatus = {
+  live: boolean
+  built: boolean
+  built_at: string | null
+  files: number
+  size_bytes: number
+  node: { npm: string | null; node: string | null; ok: boolean; message: string }
+  build: WebsiteBuild
+  public_base_url: string
+  search_access: 'open' | 'key'
+}

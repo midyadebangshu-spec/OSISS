@@ -13,7 +13,6 @@ from urllib.parse import urlparse
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response, StreamingResponse
-from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, field_validator
 from starlette.concurrency import run_in_threadpool
 
@@ -32,6 +31,7 @@ import page_assets
 import page_labels
 import replica
 import runtime_config
+import website
 import workspace_api
 from config import settings
 from db_pool import db
@@ -507,6 +507,15 @@ async def api_search_rich(payload: SearchRequest, request: Request):
     return RichSearchResponse(query=query, layout=LayoutInfo(**layout_info), results=results)
 
 
-if settings.serve_frontend and os.path.isdir(FRONTEND_DIST):
-    # Added last so the API routes above take precedence.
-    app.mount("/", StaticFiles(directory=FRONTEND_DIST, html=True), name="frontend")
+@app.get("/{path:path}", include_in_schema=False)
+def website_files(path: str):
+    """The built website while it is live (see website.py). Added last, so every API route above takes precedence;
+    unknown API paths keep their JSON "Not Found"."""
+    if website.is_api_path(path) or not website.is_live():
+        raise HTTPException(status_code=404, detail="Not Found")
+    target = website.resolve_file(path)
+    if target is None and not os.path.splitext(path)[1]:
+        target = website.resolve_file("")  # the single-page app handles any other address itself
+    if target is None:
+        raise HTTPException(status_code=404, detail="Not Found")
+    return FileResponse(target, headers=website.cache_headers(os.path.relpath(target, website.DIST)))

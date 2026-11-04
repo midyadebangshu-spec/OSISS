@@ -28,6 +28,7 @@
     "files": [
       "dist/**",
       "dist-electron/**",
+      "build/icon.png",
       "package.json"
     ],
     "linux": {
@@ -36,7 +37,10 @@
         "deb"
       ],
       "category": "Utility",
-      "maintainer": "OSISS contributors"
+      "maintainer": "OSISS contributors",
+      "executableName": "osiss-admin",
+      "syncDesktopName": true,
+      "icon": "build/icon.png"
     },
     "win": {
       "target": "nsis"
@@ -68,5 +72,6 @@
     "typescript": "~6.0.2",
     "typescript-eslint": "^8.71.2",
     "vite": "^8.3.4"
-  }
+  },
+  "desktopName": "osiss-admin.desktop"
 }

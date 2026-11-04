@@ -18,7 +18,7 @@ import type {
   UploadMetadata,
 } from '../shared/types.ts'
 import { ApiProcess, checkRepo, dockerAction, dockerStatus } from './localControl.ts'
-import { adminTokenFromEnv, checkProfileUrl, isAllowedApiPath, isLoopback } from './profiles.ts'
+import { adminTokenFromEnv, checkProfileUrl, isAllowedApiPath, isLoopback, isOpenableUrl } from './profiles.ts'
 import { MIN_PASSPHRASE_LENGTH, Vault, generateCode, type OsSealer, type StoredProfile } from './vault.ts'
 
 const DEV_SERVER_URL = process.env.VITE_DEV_SERVER_URL
@@ -38,8 +38,12 @@ const sealer: OsSealer = {
 let vault: Vault
 let window: BrowserWindow | null = null
 
+// The app icon (build/icon.png is also what electron-builder turns into the installer and dock icons).
+const APP_ICON = join(__dirname, '..', 'build', 'icon.png')
+
 function createWindow() {
   window = new BrowserWindow({
+    ...(existsSync(APP_ICON) ? { icon: APP_ICON } : {}),
     width: 1280,
     height: 820,
     minWidth: 960,
@@ -325,6 +329,11 @@ function registerIpc() {
   handle('local:apiLog', (profileId: string) => new ApiProcess(app.getPath('userData'), findProfile(profileId).id).log())
 
   handle('clipboard:write', (text: string) => clipboard.writeText(text))
+  handle('shell:openExternal', async (url: string) => {
+    if (!isOpenableUrl(url)) return { ok: false, error: 'Only http and https addresses can be opened.' }
+    await shell.openExternal(url)
+    return { ok: true }
+  })
 }
 
 const singleInstance = app.requestSingleInstanceLock()

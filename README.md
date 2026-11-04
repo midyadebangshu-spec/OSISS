@@ -261,6 +261,7 @@ Every step names the setting that controls it (see [section 12](#12-configuratio
 | `/api/workspace/projects/<id>/board*`, `/cards*`, `/study/*`, `/saved-searches*`, `/notifications*` | research board, flashcards (SM-2), saved-search alerts (see [11.6.9](#1169-scholar-accounts-and-passwords)) |
 | `/api/workspace/drafts*`, `/api/workspace/references` | writing studio (drafts, quote check, Word / LaTeX / Markdown export) and formatted references with BibTeX / RIS (see [11.6.9](#1169-scholar-accounts-and-passwords)) |
 | `GET /api/library/<id>/page/<n>`, `/find-page?label=` | the reader's page (image, word boxes, printed page number) and a printed-page lookup |
+| `GET/PUT /api/admin/website`, `POST /api/admin/website/build` | build the website and switch it live or offline (see [11.6.10](#11610-put-the-website-live)) |
 | `/api/admin/*` | admin API for the desktop admin app, behind `ADMIN_TOKEN` (see [section 11](#11-using-the-admin-app-step-by-step)) |
 
 `/api/search` and `/data` follow the search access mode chosen in the admin app: **open** (anyone who can reach the server) or
@@ -1289,6 +1290,23 @@ marked `Secure`.
   re-ingested), the scholar's dashboard re-runs those searches (a few per visit, through the normal search queue, nothing in the
   background) and shows a notice for each book that now answers a search and did not before. Notices are in-app only (no email);
   a scholar keeps at most 20 saved searches. Everything here is included in **Download everything (JSON)**.
+
+#### 11.6.10 Put the website live
+
+The **Website** page of the admin app builds the website and serves it from the OSISS server itself; nothing is live until you
+click **Go live**.
+
+1. **Build website** runs `npm install` (only when packages changed) and `npm run build` in `frontend/` on the server and shows the
+   log. It needs Node.js 20.19+ or 22.12+ on that machine; the page says so when it is missing or too old. An nvm install is found
+   even if the API was started from a menu with a short `PATH`.
+2. **Go live** makes the API serve `frontend/dist` at `/`; **Take offline** stops it. The switch and a rebuild take effect at
+   once, with no restart. Search through the API and the admin app are not affected either way.
+3. Visitors open the address shown (the *Public base URL* from **Access & API keys**, else the server address). The old
+   `SERVE_FRONTEND=true` environment variable now only sets the starting state; the admin's choice is saved and wins.
+
+For a public domain the page fills in the Caddy config and the commands from your domain name (and, optionally, the admin PC's
+IP), as in [section 11.5](#115-setup-c-a-public-website-on-your-own-domain). The app cannot register a domain, change DNS or
+install HTTPS for you. With several API copies, build and switch on each copy.
 
 ### 11.7 How the app and the server are protected
 

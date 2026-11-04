@@ -55,3 +55,13 @@ export function adminTokenFromEnv(text: string): string | null {
 export function isAllowedApiPath(path: string): boolean {
   return (path === '/health' || path.startsWith('/api/admin/')) && !path.includes('..')
 }
+
+/** Addresses the renderer may open in the system browser: plain http(s) only, never file:, javascript: or custom schemes. */
+export function isOpenableUrl(value: string): boolean {
+  try {
+    const url = new URL(value)
+    return (url.protocol === 'http:' || url.protocol === 'https:') && Boolean(url.hostname)
+  } catch {
+    return false
+  }
+}

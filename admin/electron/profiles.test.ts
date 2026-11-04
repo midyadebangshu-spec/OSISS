@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
-import { adminTokenFromEnv, checkProfileUrl, isAllowedApiPath } from './profiles.ts'
+import { adminTokenFromEnv, checkProfileUrl, isAllowedApiPath, isOpenableUrl } from './profiles.ts'
 
 test('https anywhere, http only on loopback or with explicit opt-in', () => {
   assert.deepEqual(checkProfileUrl('https://search.college.edu/', 'remote'), { ok: true, url: 'https://search.college.edu' })
@@ -36,4 +36,10 @@ test('the renderer may only reach admin routes', () => {
   assert.ok(!isAllowedApiPath('/api/search'))
   assert.ok(!isAllowedApiPath('/api/admin/../search'))
   assert.ok(!isAllowedApiPath('//evil.example/api/admin/x'))
+})
+
+test('isOpenableUrl allows only http and https addresses', () => {
+  assert.ok(isOpenableUrl('http://localhost:8000/'))
+  assert.ok(isOpenableUrl('https://search.example.edu'))
+  for (const bad of ['file:///etc/passwd', 'javascript:alert(1)', 'ssh://host', 'not a url', '', 'http://', '//evil.example']) assert.ok(!isOpenableUrl(bad), bad)
 })

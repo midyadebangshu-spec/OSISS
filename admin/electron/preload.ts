@@ -42,6 +42,7 @@ const bridge: OsissBridge = {
     apiLog: call('local:apiLog') as OsissBridge['local']['apiLog'],
   },
   copyText: call('clipboard:write') as OsissBridge['copyText'],
+  openExternal: call('shell:openExternal') as OsissBridge['openExternal'],
 }
 
 contextBridge.exposeInMainWorld('osiss', bridge)

@@ -111,4 +111,6 @@ export type OsissBridge = {
     apiLog(profileId: string): Promise<string>
   }
   copyText(text: string): Promise<void>
+  /** Opens an http(s) address in the system browser (other schemes are refused). */
+  openExternal(url: string): Promise<{ ok: boolean; error?: string }>
 }

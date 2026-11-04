@@ -3,6 +3,7 @@ import {
   Gauge,
   Globe,
   Lock,
+  Rocket,
   Search,
   Server,
   Settings as SettingsIcon,
@@ -13,6 +14,7 @@ import {
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
 
 import type { ApiRequest, Profile, VaultStatus } from '../shared/types.ts'
+import logoMark from './assets/logo-mark.svg'
 import { AccessWizard } from './components/AccessWizard.tsx'
 import { Badge, Spinner } from './components/ui.tsx'
 import { osiss } from './lib/bridge.ts'
@@ -25,10 +27,11 @@ import { Ingestion } from './pages/Ingestion.tsx'
 import { SearchConsole } from './pages/SearchConsole.tsx'
 import { Security } from './pages/Security.tsx'
 import { Servers } from './pages/Servers.tsx'
+import { WebsitePage } from './pages/Website.tsx'
 import { ScholarsPage } from './pages/Scholars.tsx'
 import { SettingsPage } from './pages/Settings.tsx'
 
-type PageKey = 'dashboard' | 'books' | 'ingestion' | 'search' | 'settings' | 'access' | 'scholars' | 'servers' | 'security'
+type PageKey = 'dashboard' | 'books' | 'ingestion' | 'search' | 'settings' | 'access' | 'website' | 'scholars' | 'servers' | 'security'
 
 const SERVER_PAGES: Array<{ key: PageKey; label: string; icon: ReactNode }> = [
   { key: 'dashboard', label: 'Dashboard', icon: <Gauge className="h-4 w-4" /> },
@@ -37,6 +40,7 @@ const SERVER_PAGES: Array<{ key: PageKey; label: string; icon: ReactNode }> = [
   { key: 'search', label: 'Search console', icon: <Search className="h-4 w-4" /> },
   { key: 'settings', label: 'Search settings', icon: <SettingsIcon className="h-4 w-4" /> },
   { key: 'access', label: 'Access & API keys', icon: <Globe className="h-4 w-4" /> },
+  { key: 'website', label: 'Website', icon: <Rocket className="h-4 w-4" /> },
   { key: 'scholars', label: 'Scholars', icon: <Users className="h-4 w-4" /> },
 ]
 
@@ -177,6 +181,7 @@ export function Shell({ vault, onLock, onVaultChange }: { vault: VaultStatus; on
       search: <SearchConsole />,
       settings: <SettingsPage />,
       access: <AccessPage onChange={() => profile && checkConnection(profile)} />,
+      website: <WebsitePage />,
       scholars: <ScholarsPage />,
     }
     content = pages[activePage]
@@ -185,7 +190,8 @@ export function Shell({ vault, onLock, onVaultChange }: { vault: VaultStatus; on
   return (
     <div className="flex h-screen overflow-hidden">
       <aside className="flex w-60 shrink-0 flex-col border-r border-slate-200 bg-white">
-        <div className="border-b border-slate-100 px-4 py-4">
+        <div className="flex items-center gap-3 border-b border-slate-100 px-4 py-4">
+          <img src={logoMark} alt="" className="h-7 w-7 shrink-0" />
           <div className="text-sm font-semibold tracking-tight text-black">OSISS Admin</div>
         </div>
         <div className="border-b border-slate-100 p-3">

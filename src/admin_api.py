@@ -26,6 +26,7 @@ import accounts
 import admin
 import load_control
 import runtime_config
+import website
 from config import settings
 from db_pool import db
 
@@ -667,6 +668,39 @@ def delete_key(client_id: int) -> Dict[str, Any]:
     except admin.AdminError as exc:
         _fail(exc)
     return {"deleted": client_id}
+
+
+# --- website ----------------------------------------------------------------------------------------------------------
+
+
+class WebsiteSwitch(BaseModel):
+    live: bool
+
+
+@router.get("/website")
+def get_website() -> Dict[str, Any]:
+    """Whether the website is built and live, the Node.js it would build with, and the last build's output."""
+    return {**website.status(), "public_base_url": settings.public_base_url, "search_access": settings.search_access or "open"}
+
+
+@router.post("/website/build")
+def build_website() -> Dict[str, Any]:
+    """Build the site in the background (npm install when needed, then npm run build); poll GET /website for the log."""
+    node = website.node_info()
+    if not node["ok"]:
+        raise HTTPException(503, node["message"])
+    if not website.builder.start(node["npm"]):
+        raise HTTPException(409, "A build is already running.")
+    return {**website.status(), "public_base_url": settings.public_base_url, "search_access": settings.search_access or "open"}
+
+
+@router.put("/website")
+def switch_website(payload: WebsiteSwitch) -> Dict[str, Any]:
+    """Go live or take the website offline. Going live needs a build."""
+    if payload.live and not website.built_info()["built"]:
+        raise HTTPException(409, "Build the website first.")
+    website.set_live(payload.live)
+    return {**website.status(), "public_base_url": settings.public_base_url, "search_access": settings.search_access or "open"}
 
 
 # --- scholar accounts ---------------------------------------------------------------------------------------------

@@ -2,6 +2,7 @@ import { KeyRound, Lock } from 'lucide-react'
 import { useEffect, useState, type FormEvent, type ReactNode } from 'react'
 
 import type { VaultStatus } from '../../shared/types.ts'
+import logoMark from '../assets/logo-mark.svg'
 import { Alert, Button, Input, Modal } from '../components/ui.tsx'
 import { osiss } from '../lib/bridge.ts'
 
@@ -23,6 +24,7 @@ function Frame({ children }: { children: ReactNode }) {
   return (
     <div className="flex min-h-screen items-center justify-center bg-gradient-to-br from-slate-100 to-neutral-200 p-6">
       <div className="w-full max-w-md rounded-xl border border-slate-200 bg-white p-8 shadow-lg">
+        <img src={logoMark} alt="OSISS" className="mb-5 h-12 w-12" />
         <div className="mb-6">
           <div className="text-lg font-semibold tracking-tight text-black">OSISS Admin</div>
           <div className="text-xs text-slate-500">Server control for the OSISS search engine</div>

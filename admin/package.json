@@ -40,7 +40,7 @@
       "maintainer": "OSISS contributors",
       "executableName": "osiss-admin",
       "syncDesktopName": true,
-      "icon": "build/icon.png"
+      "icon": "build/icons"
     },
     "win": {
       "target": "nsis"

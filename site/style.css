@@ -176,8 +176,8 @@ mark { background: var(--accent); color: var(--on-accent); padding: 1px 3px; }
 .install { list-style: none; padding: 0; margin: 0 0 40px; counter-reset: none; }
 .install > li { padding: 0 0 36px 0; margin-bottom: 36px; border-bottom: 1.5px solid var(--line); }
 .install > li:last-child { border-bottom: 0; margin-bottom: 0; }
-.install h3 { display: flex; align-items: center; gap: 14px; font-size: 22px; margin-bottom: 14px; }
-.install h3 .n { margin: 0; flex: none; }
+.install h3 { position: relative; padding-left: 46px; min-height: 32px; display: block; padding-top: 3px; font-size: 22px; margin-bottom: 14px; }
+.install h3 .n { position: absolute; left: 0; top: 0; margin: 0; }
 .install .body { padding-left: 46px; max-width: 800px; }
 .install .body p { color: var(--ink-2); }
 .install .body p.note { color: var(--ink-3); }
@@ -242,4 +242,16 @@ details p { margin: 10px 0 0; color: var(--ink-2); }
   .demo-link { margin-left: 0; }
 }
 
-@media print { .site-header, .copy, .icon-btn { display: none; } }
+/* Hover highlight: the logo's amber marker wipes across a word. Script wraps words in .w; hover devices only. */
+.w { background: linear-gradient(var(--accent), var(--accent)) no-repeat 0 0 / 0% 100%; transition: background-size 0.18s ease-out, color 0.18s; }
+@media (hover: hover) {
+  .w:hover { background-size: 100% 100%; color: var(--on-accent); }
+}
+@media (prefers-reduced-motion: reduce) { .w { transition: none; } }
+
+/* Reveal on scroll: added by script only, so nothing is hidden without JavaScript or with reduced motion. */
+.js .reveal:not(.in) { opacity: 0; transform: translateY(16px); }
+.js .reveal { transition: opacity 0.55s ease-out, transform 0.55s ease-out; transition-delay: var(--d, 0ms); }
+.js .reveal.in { opacity: 1; transform: none; }
+
+@media print { .site-header, .copy, .icon-btn { display: none; } .reveal { opacity: 1 !important; transform: none !important; } }

@@ -133,6 +133,58 @@
     });
   }
 
+
+  /* Hover highlight: wrap each word of the readable text in <span class="w"> (code, buttons and the demo are left alone). */
+  (function () {
+    var skip = 'pre, code, button, .btn, .n, .demo, mark, .tablist, .copy, script, style, textarea, svg';
+    var blocks = document.querySelectorAll('main h1, main h2, main h3, main p, main li, main summary, main figcaption, main td, .site-footer p');
+    blocks.forEach(function (block) {
+      if (block.closest(skip) && !block.matches('h1,h2,h3,p,li,summary,figcaption')) return;
+      if (block.closest('pre, .demo, .tablist, .btn, button')) return;
+      var walker = document.createTreeWalker(block, NodeFilter.SHOW_TEXT, null);
+      var nodes = [], n;
+      while ((n = walker.nextNode())) {
+        if (!n.nodeValue.trim()) continue;
+        var el = n.parentElement;
+        if (el.closest(skip) || el.classList.contains('w')) continue;
+        nodes.push(n);
+      }
+      nodes.forEach(function (node) {
+        var parts = node.nodeValue.split(/(\s+)/), frag = document.createDocumentFragment();
+        parts.forEach(function (part) {
+          if (!part) return;
+          if (/^\s+$/.test(part)) { frag.appendChild(document.createTextNode(part)); return; }
+          var span = document.createElement('span');
+          span.className = 'w';
+          span.textContent = part;
+          frag.appendChild(span);
+        });
+        node.parentNode.replaceChild(frag, node);
+      });
+    });
+  })();
+
+  /* Reveal on scroll: fade and rise once when an element first enters the viewport. */
+  if ('IntersectionObserver' in window && !reduce) {
+    var targets = document.querySelectorAll(
+      '.section .eyebrow, .section h2, .sub, .card, .split > div, .steps4, .stats, .note, ' +
+      '.req, .install > li, .tabs:not(.install .tabs), .other-setups, #faq details'
+    );
+    var seen = new IntersectionObserver(function (entries, obs) {
+      entries.forEach(function (en) {
+        if (!en.isIntersecting) return;
+        en.target.classList.add('in');
+        obs.unobserve(en.target);
+      });
+    }, { rootMargin: '0px 0px -8% 0px', threshold: 0.08 });
+    targets.forEach(function (el) {
+      var idx = Array.prototype.indexOf.call(el.parentNode.children, el);
+      el.style.setProperty('--d', Math.min(idx, 4) * 70 + 'ms');
+      el.classList.add('reveal');
+      seen.observe(el);
+    });
+  }
+
   /* Hero demo: type the query once, then reveal the result. Static final frame without motion. */
   var q = document.getElementById('demo-q');
   var result = document.getElementById('demo-result');

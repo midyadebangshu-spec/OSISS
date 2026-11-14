@@ -185,19 +185,37 @@
     });
   }
 
-  /* Hero demo: type the query once, then reveal the result. Static final frame without motion. */
+  /* Hero demo: type the query, reveal the result, hold, then fade out and start again.
+     With reduced motion the finished frame stays still. The loop waits while the tab is hidden. */
   var q = document.getElementById('demo-q');
   var result = document.getElementById('demo-result');
   if (q && result && !reduce) {
     var full = q.getAttribute('data-text') || q.textContent;
-    q.textContent = '';
-    result.classList.add('pending');
-    var i = 0;
-    (function tick() {
-      i += 1;
-      q.textContent = full.slice(0, i);
-      if (i < full.length) { setTimeout(tick, 55); }
-      else { setTimeout(function () { result.classList.remove('pending'); }, 350); }
-    })();
+    var HOLD = 7000;   // how long the finished result stays on screen
+    var GAP = 700;     // empty pause before the next round
+
+    var later = function (fn, ms) {
+      setTimeout(function wait() {
+        if (document.hidden) { setTimeout(wait, 500); return; }
+        fn();
+      }, ms);
+    };
+
+    var cycle = function () {
+      q.textContent = '';
+      result.classList.add('pending');
+      var i = 0;
+      (function tick() {
+        i += 1;
+        q.textContent = full.slice(0, i);
+        if (i < full.length) { setTimeout(tick, 55); return; }
+        later(function () { result.classList.remove('pending'); }, 350);
+        later(function () {
+          result.classList.add('pending');            // fade the result out
+          later(function () { q.textContent = ''; later(cycle, GAP); }, 500);
+        }, 350 + HOLD);
+      })();
+    };
+    cycle();
   }
 })();

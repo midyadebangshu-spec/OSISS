@@ -242,7 +242,7 @@ npm install
 npm run dist          # Linux: release/OSISS Admin-1.0.0.AppImage and a .deb</code></pre>
             <p>Debian and Ubuntu: <code>sudo apt install ./release/osiss-admin_1.0.0_amd64.deb</code>, then start <em>OSISS Admin</em> from the applications menu. Other Linux: make the AppImage executable and run it. On Windows or macOS use <code>npm run dist:win</code> or <code>npm run dist:mac</code> on that system.</p>
           </details>
-          <p class="note">The Windows and macOS builds are configured but have only been tested on Linux. Starting and stopping services from the Dashboard works on Linux and macOS only. The installer contains no server address or secret.</p>
+          <p class="note">The app runs on Windows, macOS and Linux, but the OSISS <em>server</em> runs on Ubuntu or macOS only. On Windows the app manages a server on another computer (see step 4). The Windows and macOS installers are built automatically and have not been tested by hand. The installer contains no server address or secret.</p>
         </div>
       </li>
 
@@ -307,6 +307,7 @@ cd OSISS
             <li><b>OSISS folder:</b> click <b>Browse</b> and pick the OSISS folder</li>
           </ul>
           <p>Click <b>Read token from .env</b>, then <b>Save &amp; test connection</b>. You should see “Connected: admin token accepted”.</p>
+          <p class="callout"><b>On Windows, or managing a server elsewhere?</b> Choose <b>Elsewhere (a domain or another machine)</b> instead, enter the server's URL (for example <code>http://192.168.1.20:8000</code>) and its <code>ADMIN_TOKEN</code>, then continue from step 5. The server keeps itself running there, so step 6 does not apply. <a href="https://github.com/midyadebangshu-spec/OSISS#114-setup-b-a-server-on-the-campus-network">Setup B</a> has the details.</p>
           <a class="shot small" href="assets/add-local-server.webp"><img src="assets/add-local-server.webp" width="1280" height="800" loading="lazy" alt="The Servers page of OSISS Admin after a successful connection test."></a>
         </div>
       </li>

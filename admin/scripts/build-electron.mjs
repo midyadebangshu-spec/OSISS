@@ -1,4 +1,5 @@
 // Bundles the Electron main and preload scripts (TypeScript) into dist-electron/*.cjs.
+import { pathToFileURL } from 'node:url'
 import { build, context } from 'esbuild'
 
 const options = {
@@ -23,6 +24,7 @@ export async function watchElectron(onRebuild) {
   return ctx
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+// pathToFileURL, not a string template: on Windows `file://${path}` never equals import.meta.url, so the bundle was skipped.
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   await build(options)
 }

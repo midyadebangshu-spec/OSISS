@@ -71,6 +71,28 @@ export type LocalStatus = {
 
 export type LocalResult = { ok: boolean; output: string }
 
+/** Installing a server on this computer with the project's install.sh. */
+export type InstallStatus = {
+  supported: boolean
+  /** Why installing is not possible here (Windows, ...). */
+  reason?: string
+  defaultDir: string
+  scriptUrl: string
+  state: 'idle' | 'running' | 'done' | 'failed' | 'blocked'
+  step: string
+  canCancel: boolean
+  /** The tail of the installer's output. It never contains the admin token (the app reads that from .env itself). */
+  log: string
+  dir?: string
+  /** The server profile created for this install once it is finished. */
+  profileId?: string
+  /** What is missing (blocked) or what needs administrator rights. */
+  missing: string[]
+  message?: string
+  /** A command to run in a terminal when the app cannot do the step itself. */
+  manualCommand?: string
+}
+
 export type OsissBridge = {
   vault: {
     status(): Promise<VaultStatus>
@@ -109,6 +131,13 @@ export type OsissBridge = {
     docker(profileId: string, action: 'up' | 'stop'): Promise<LocalResult>
     api(profileId: string, action: 'start' | 'stop'): Promise<LocalResult>
     apiLog(profileId: string): Promise<string>
+  }
+  install: {
+    status(): Promise<InstallStatus>
+    start(dir: string): Promise<{ ok: boolean; error?: string }>
+    cancel(): Promise<void>
+    /** Download install.sh and let the admin choose where to save it (for installing on another computer). */
+    saveScript(): Promise<{ ok: boolean; error?: string; path?: string }>
   }
   copyText(text: string): Promise<void>
   /** Opens an http(s) address in the system browser (other schemes are refused). */

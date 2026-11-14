@@ -2,6 +2,7 @@ import { FolderOpen, Plug, Plus, Trash2 } from 'lucide-react'
 import { useState } from 'react'
 
 import type { Profile, ProfileInput } from '../../shared/types.ts'
+import { InstallServer, ServerScriptHelp } from '../components/InstallServer.tsx'
 import { Alert, Badge, Button, Card, Field, Input, Messages, Modal, PageHeader } from '../components/ui.tsx'
 import { osiss } from '../lib/bridge.ts'
 import { useAction } from '../lib/hooks.ts'
@@ -92,6 +93,7 @@ function ProfileForm({
             </div>
           </Field>
         )}
+        {draft.kind === 'remote' && !editing && <ServerScriptHelp />}
         {draft.kind === 'remote' && (
           <label className="flex items-start gap-2 text-sm text-slate-600 md:col-span-2">
             <input type="checkbox" className="mt-1" checked={Boolean(draft.allowInsecureHttp)} onChange={(event) => update({ allowInsecureHttp: event.target.checked })} />
@@ -172,6 +174,7 @@ export function Servers({
           </Button>
         }
       />
+      <InstallServer hasLocalServer={profiles.some((item) => item.kind === 'local')} onFinished={(id) => onChanged(id)} onOpen={onSelect} />
       {!profiles.length && !editing && <Alert tone="amber">Add a server to get started.</Alert>}
       {editing && (
         <ProfileForm

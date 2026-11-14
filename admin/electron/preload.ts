@@ -41,6 +41,12 @@ const bridge: OsissBridge = {
     api: call('local:api') as OsissBridge['local']['api'],
     apiLog: call('local:apiLog') as OsissBridge['local']['apiLog'],
   },
+  install: {
+    status: call('install:status') as OsissBridge['install']['status'],
+    start: call('install:start') as OsissBridge['install']['start'],
+    cancel: call('install:cancel') as OsissBridge['install']['cancel'],
+    saveScript: call('install:saveScript') as OsissBridge['install']['saveScript'],
+  },
   copyText: call('clipboard:write') as OsissBridge['copyText'],
   openExternal: call('shell:openExternal') as OsissBridge['openExternal'],
 }

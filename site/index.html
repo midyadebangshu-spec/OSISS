@@ -254,17 +254,39 @@ npm run dist          # Linux: release/OSISS Admin-1.0.1.AppImage and a .deb</co
       </li>
 
       <li>
-        <h3><span class="n">3</span>Prepare the server (the one terminal step)</h3>
+        <h3><span class="n">3</span>Install the server</h3>
         <div class="body">
-          <p>The admin app controls an OSISS server but does not install it, so run this once on the computer that will host OSISS. <code>setup.sh</code> sets up Python, Docker, the database, the models and an <code>ADMIN_TOKEN</code> that the app uses to connect.</p>
-          <div class="tabs" data-tabs data-remember="osiss-os">
-            <div class="tablist" role="tablist" aria-label="Operating system">
-              <button role="tab" type="button">Ubuntu</button>
-              <button role="tab" type="button">macOS</button>
-            </div>
-            <div class="panel" role="tabpanel">
-              <p class="label">Ubuntu, as a user who may use <code>sudo</code></p>
-              <pre class="code"><code>sudo apt-get update
+          <p>The server is what searches your books: Python, Docker (for PostgreSQL and Elasticsearch), the models and a token for the app. One installer script sets all of it up. Pick the case that matches you.</p>
+
+          <p class="label">The server and the admin app are on the same computer (Linux or macOS)</p>
+          <p>In the app open <b>Servers</b> and press <b>Install a server on this computer</b>. It downloads the installer, runs it, shows its log, asks for your administrator password once through the system's own prompt if something has to be installed, and finally adds the server to the app and reads its token for you. Nothing is copied by hand, and steps 4 and 5 below are done for you. On macOS, install <a href="https://brew.sh">Homebrew</a> and <a href="https://www.docker.com/products/docker-desktop/">Docker Desktop</a> (and start it) first; the app tells you if either is missing.</p>
+
+          <p class="label">The server is another computer (Ubuntu, Debian or macOS), or you are on Windows</p>
+          <p>Run this in a terminal on the server. It installs what is missing, downloads the OSISS code (no Git needed), sets up the models, and prints the server address and the admin token at the end:</p>
+          <pre class="code"><code>curl -fsSL https://midyadebangshu-spec.github.io/OSISS/install.sh | bash -s -- --listen all --service</code></pre>
+          <p><code>--listen all</code> lets other computers (your admin PC) reach it, and <code>--service</code> starts it at boot. Prefer to read it first? <a href="install.sh" download>Download install.sh</a>, look at it, and run <code>bash install.sh --listen all --service</code>. The same command and a Save button are in the app under <b>Add server</b> &rarr; <b>Elsewhere</b>.</p>
+
+          <details class="more">
+            <summary>What the installer does, and its options</summary>
+            <ul class="plain">
+              <li>On Ubuntu and Debian it installs the missing system packages, Docker and Node.js. That is the only step that needs administrator rights, and it is skipped when nothing is missing.</li>
+              <li>It then downloads the code into <code>/opt/osiss</code> (or <code>~/osiss</code>) and runs the project's <code>setup.sh</code>: Python environment, database, the models (about 12&nbsp;GB) and the admin token.</li>
+              <li>Running it again is safe. It keeps your <code>.env</code>, books and models and only refreshes the code.</li>
+              <li><code>--dir DIR</code> chooses the folder, <code>--ref REF</code> a version, <code>--no-website</code> skips Node.js, <code>--dry-run</code> shows what it would do without changing anything.</li>
+              <li>On macOS it checks for Homebrew and Docker Desktop and tells you what to install. Macs have no CUDA, so search runs on the CPU and is slower. With an NVIDIA GPU on Linux, install the driver and check <code>nvidia-smi</code> first.</li>
+            </ul>
+          </details>
+
+          <details class="more">
+            <summary>Install by hand instead</summary>
+            <div class="tabs" data-tabs data-remember="osiss-os">
+              <div class="tablist" role="tablist" aria-label="Operating system">
+                <button role="tab" type="button">Ubuntu</button>
+                <button role="tab" type="button">macOS</button>
+              </div>
+              <div class="panel" role="tabpanel">
+                <p class="label">Ubuntu, as a user who may use <code>sudo</code></p>
+                <pre class="code"><code>sudo apt-get update
 sudo apt-get install -y git curl python3 python3-venv python3-pip \
   tesseract-ocr tesseract-ocr-eng tesseract-ocr-ben tesseract-ocr-hin wamerican
 
@@ -279,26 +301,26 @@ sudo apt-get install -y nodejs
 git clone https://github.com/midyadebangshu-spec/OSISS.git
 cd OSISS
 ./setup.sh</code></pre>
-              <p class="note">With an NVIDIA GPU, also run <code>sudo ubuntu-drivers install</code>, reboot, and check that <code>nvidia-smi</code> lists the card.</p>
-            </div>
-            <div class="panel" role="tabpanel">
-              <p class="label">macOS, with <a href="https://brew.sh">Homebrew</a> and <a href="https://www.docker.com/products/docker-desktop/">Docker Desktop</a> (start it first)</p>
-              <pre class="code"><code>brew install git python node tesseract tesseract-lang
+              </div>
+              <div class="panel" role="tabpanel">
+                <p class="label">macOS, with Homebrew and Docker Desktop running</p>
+                <pre class="code"><code>brew install git python node tesseract tesseract-lang
 
 git clone https://github.com/midyadebangshu-spec/OSISS.git
 cd OSISS
 ./setup.sh</code></pre>
-              <p class="note">Macs have no CUDA, so models run on the CPU: search works but is slower.</p>
+              </div>
             </div>
-          </div>
-          <p class="note"><code>setup.sh</code> is safe to run again. It downloads about 12 GB, so allow some time.</p>
+          </details>
+          <p class="note">The server does not run on Windows. The Windows admin app manages a server that runs on another computer. Where the token lives: <a href="https://github.com/midyadebangshu-spec/OSISS#the-secrets-and-what-each-one-protects">the secrets, explained</a>.</p>
         </div>
       </li>
 
       <li>
         <h3><span class="n">4</span>Add the server in the app</h3>
         <div class="body">
-          <p>In <b>Servers</b>, fill in the form:</p>
+          <p class="callout">If you used <b>Install a server on this computer</b> in step 3, the app has already added the server and read its token. Skip to step 5.</p>
+          <p>Otherwise, in <b>Servers</b>, fill in the form:</p>
           <ul class="plain">
             <li><b>Name:</b> <code>This computer</code></li>
             <li><b>Where does the server run?</b> On this computer (can start / stop it)</li>

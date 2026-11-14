@@ -5,8 +5,11 @@
 
 import { app, BrowserWindow, clipboard, dialog, ipcMain, safeStorage, shell } from 'electron'
 import { randomUUID } from 'node:crypto'
+import { execFileSync } from 'node:child_process'
+import { userInfo } from 'node:os'
 import { existsSync, openAsBlob, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { basename, join } from 'node:path'
+import { INSTALL_SCRIPT_URL } from '../shared/install.ts'
 
 import type {
   ApiRequest,
@@ -18,6 +21,7 @@ import type {
   UploadMetadata,
 } from '../shared/types.ts'
 import { ApiProcess, checkRepo, dockerAction, dockerStatus } from './localControl.ts'
+import { MAX_SCRIPT_BYTES, ServerInstaller, looksLikeInstallScript } from './serverInstall.ts'
 import { adminTokenFromEnv, checkProfileUrl, isAllowedApiPath, isLoopback, isOpenableUrl } from './profiles.ts'
 import { MIN_PASSPHRASE_LENGTH, Vault, generateCode, type OsSealer, type StoredProfile } from './vault.ts'
 
@@ -115,6 +119,18 @@ function saveProfile(input: ProfileInput): { ok: true; profile: Profile } | { ok
   else profiles.push(profile)
   vault.saveProfiles(profiles)
   return { ok: true, profile: publicProfile(profile) }
+}
+
+/** Copy ADMIN_TOKEN from <repoPath>/.env into the profile (the renderer never sees it). */
+function readTokenFromEnv(id: string): { ok: boolean; error?: string } {
+  const profile = findProfile(id)
+  if (!profile.repoPath) return { ok: false, error: 'Set the OSISS folder first.' }
+  const envFile = join(profile.repoPath, '.env')
+  if (!existsSync(envFile)) return { ok: false, error: `${envFile} does not exist. Run ./setup.sh to create it.` }
+  const token = adminTokenFromEnv(readFileSync(envFile, 'utf8'))
+  if (!token) return { ok: false, error: `No ADMIN_TOKEN line in ${envFile}.` }
+  vault.saveProfiles(vault.profiles().map((item) => (item.id === id ? { ...item, token } : item)))
+  return { ok: true }
 }
 
 // --- server calls -----------------------------------------------------------------------------------------------
@@ -236,6 +252,46 @@ async function localStatus(profileId: string): Promise<LocalStatus> {
   return { supported: true, repoOk: true, docker: await dockerStatus(profile.repoPath!), api: apiState }
 }
 
+// --- installing a server on this computer ----------------------------------------------------------------------
+
+/** The installer script from the project's site. Only this one address, over HTTPS, size-capped. */
+async function downloadInstallScript(): Promise<string> {
+  const response = await fetch(INSTALL_SCRIPT_URL, { signal: AbortSignal.timeout(30_000), redirect: 'follow' })
+  if (!response.ok) throw new Error(`the server answered ${response.status}`)
+  const text = await response.text()
+  if (text.length > MAX_SCRIPT_BYTES) throw new Error('the file is too large')
+  return text
+}
+
+function hasCommand(name: string): boolean {
+  try {
+    execFileSync('/bin/sh', ['-c', `command -v ${name}`], { stdio: 'ignore' })
+    return true
+  } catch {
+    return false
+  }
+}
+
+let installer: ServerInstaller
+
+/** Once an install has finished, add (or refresh) the "This computer" profile and read its token from .env. */
+function adoptInstalledServer(dir: string): string | undefined {
+  const existing = vault.profiles().find((item) => item.kind === 'local' && item.repoPath === dir)
+  let id = existing?.id
+  if (!id) {
+    const saved = saveProfile({ name: 'This computer', url: 'http://localhost:8000', kind: 'local', repoPath: dir })
+    if (!saved.ok) return undefined
+    id = saved.profile.id
+  }
+  return readTokenFromEnv(id).ok ? id : undefined
+}
+
+function installStatus() {
+  const status = installer.status()
+  if (status.state === 'done' && status.dir && !installer.profileId) installer.profileId = adoptInstalledServer(status.dir)
+  return installer.status()
+}
+
 // --- IPC --------------------------------------------------------------------------------------------------------
 
 function handle<A extends unknown[], R>(channel: string, fn: (...args: A) => R | Promise<R>, needsUnlock = true) {
@@ -284,16 +340,7 @@ function registerIpc() {
   handle('profiles:list', () => vault.profiles().map(publicProfile))
   handle('profiles:save', (input: ProfileInput) => saveProfile(input))
   handle('profiles:remove', (id: string) => vault.saveProfiles(vault.profiles().filter((item) => item.id !== id)))
-  handle('profiles:tokenFromEnv', (id: string) => {
-    const profile = findProfile(id)
-    if (!profile.repoPath) return { ok: false, error: 'Set the OSISS folder first.' }
-    const envFile = join(profile.repoPath, '.env')
-    if (!existsSync(envFile)) return { ok: false, error: `${envFile} does not exist. Run ./setup.sh to create it.` }
-    const token = adminTokenFromEnv(readFileSync(envFile, 'utf8'))
-    if (!token) return { ok: false, error: `No ADMIN_TOKEN line in ${envFile}.` }
-    vault.saveProfiles(vault.profiles().map((item) => (item.id === id ? { ...item, token } : item)))
-    return { ok: true }
-  })
+  handle('profiles:tokenFromEnv', (id: string) => readTokenFromEnv(id))
 
   handle('api:request', (profileId: string, request: ApiRequest) => apiRequest(profileId, request))
   handle('api:upload', (profileId: string, filePath: string, metadata: UploadMetadata) =>
@@ -328,6 +375,22 @@ function registerIpc() {
   })
   handle('local:apiLog', (profileId: string) => new ApiProcess(app.getPath('userData'), findProfile(profileId).id).log())
 
+  handle('install:status', () => installStatus())
+  handle('install:start', (dir: string) => installer.start(String(dir ?? '')))
+  handle('install:cancel', () => installer.cancel())
+  handle('install:saveScript', async () => {
+    try {
+      const script = await downloadInstallScript()
+      if (!looksLikeInstallScript(script)) return { ok: false, error: 'The downloaded file does not look like the OSISS installer.' }
+      const result = await dialog.showSaveDialog(window!, { title: 'Save the server installer', defaultPath: 'install.sh', filters: [{ name: 'Shell script', extensions: ['sh'] }] })
+      if (result.canceled || !result.filePath) return { ok: false }
+      writeFileSync(result.filePath, script, { mode: 0o755 })
+      return { ok: true, path: result.filePath }
+    } catch (error) {
+      return { ok: false, error: `Could not download the installer: ${error instanceof Error ? error.message : String(error)}` }
+    }
+  })
+
   handle('clipboard:write', (text: string) => clipboard.writeText(text))
   handle('shell:openExternal', async (url: string) => {
     if (!isOpenableUrl(url)) return { ok: false, error: 'Only http and https addresses can be opened.' }
@@ -346,6 +409,15 @@ if (!singleInstance) {
   })
   app.whenReady().then(() => {
     vault = new Vault(app.getPath('userData'), sealer)
+    installer = new ServerInstaller({
+      platform: process.platform,
+      user: userInfo().username,
+      home: app.getPath('home'),
+      dataDir: app.getPath('userData'),
+      env: process.env,
+      fetchScript: downloadInstallScript,
+      hasCommand,
+    })
     registerIpc()
     createWindow()
   })

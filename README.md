@@ -892,6 +892,43 @@ Each row is a different question set, so the rows are not directly comparable; t
 | **GPU** | optional | An NVIDIA GPU makes search much faster. The numbers in this README come from an RTX 3060 with 12 GB (2–4 s per question). Without one (and on every Mac) the models run on the CPU, which works but takes many times longer per question; measure it with the load test in [11.8](#118-capacity-and-load). |
 | **Internet** | during setup only | `setup.sh` downloads Python packages, Docker images and the models (about 12 GB from Hugging Face). After that OSISS runs offline. |
 
+### Install with one command
+
+On Ubuntu, Debian or macOS the installer script does everything below for you: it installs what is missing (Python, Tesseract with
+the Bengali and Hindi packs, Docker, Node.js), downloads the OSISS code (no Git or clone needed), runs `setup.sh`, and prints the
+server address and the admin token at the end.
+
+```bash
+curl -fsSL https://midyadebangshu-spec.github.io/OSISS/install.sh | bash
+```
+
+To read it first, download it (`curl -fsSLO https://midyadebangshu-spec.github.io/OSISS/install.sh`), look at it, and run `bash install.sh`.
+The source is [`site/install.sh`](site/install.sh).
+
+| Option | Meaning |
+|---|---|
+| `--dir DIR` | Install folder. Default `/opt/osiss` when administrator rights are available, else `~/osiss`. |
+| `--listen local\|all` | Who can reach the API: this computer only (default), or the whole network. Use `all` when the admin app runs on another computer: `... \| bash -s -- --listen all`. |
+| `--service` | Also install and start a systemd service so the API runs at boot (Linux). |
+| `--ref REF` | Branch, tag or commit of the code to install (default `main`). |
+| `--no-website` | Do not install Node.js (the website then cannot be built on that server). |
+| `--no-print-token` | Do not print the admin token (it stays in `DIR/.env`). |
+| `--user NAME` | Run the server as this user (default: you; `osiss` when run as root). |
+| `--check` | Only report whether administrator rights are needed (exit code 10). |
+| `--dry-run` | Print what would be done without changing anything. |
+
+* Only the step that installs system packages, Docker and Node.js needs administrator rights, and it is skipped when nothing is missing.
+  The script asks for `sudo` itself; the admin app uses the system's graphical prompt (`pkexec`) instead.
+* On **macOS** install [Homebrew](https://brew.sh) and [Docker Desktop](https://www.docker.com/products/docker-desktop/) (and start it) first; the
+  script checks and tells you what is missing.
+* **Windows** is not supported for the server. The Windows admin app can manage a server that runs elsewhere.
+* Running it again is safe: it keeps `.env`, `data/` and `models/` and only refreshes the code.
+* The first run downloads about 12 GB of models. Nothing is installed or changed by `--dry-run`.
+* After it finishes the API is **not** running yet (unless you used `--service`): start it with `./api.sh` or from the admin app's Dashboard,
+  then add PDFs ([section 11](#11-using-the-admin-app-step-by-step)).
+
+The manual steps follow, for when you prefer to do it by hand or the script does not support your system.
+
 ### Prerequisites
 
 Python 3.10+, Docker with the Compose plugin, Node.js 22.12+ (or 20.19+), Git and Tesseract OCR with the English, Bengali and
@@ -1040,6 +1077,10 @@ npm run dist          # Linux: admin/release/OSISS Admin-1.0.1.AppImage and osis
 
 The built installer contains no server address or secret. Copy it to every admin PC.
 
+Installers for Linux, Windows and macOS are also attached to the
+[GitHub releases](https://github.com/midyadebangshu-spec/OSISS/releases) (tags `admin-v*`; the workflow
+`.github/workflows/release-admin.yml` builds them). The Windows and macOS builds are untested by hand and the macOS one is unsigned.
+
 ### 11.2 First launch: create your passkey
 
 1. Open the app and click **Create my passkey**.
@@ -1055,9 +1096,15 @@ From now on the app asks for the passkey every time it opens (and after 15 minut
 
 Use this to try OSISS, or when only the people at one computer will search.
 
-1. **Install the server:** install the prerequisites and get the code ([section 10](#10-setup-and-usage)), then run `./setup.sh`
-   in the OSISS folder. Among other things it writes a random `ADMIN_TOKEN` into `.env`. That token is what lets the admin
-   app control the server.
+1. **Install the server.** On Linux or macOS the easiest way is the app itself: after you have created the passkey, the
+   **Servers** page shows **Install a server on this computer**. Pick a folder (default `~/osiss`) and press **Install the
+   server**. The app runs the installer ([section 10](#10-setup-and-usage)), shows its log, asks for your administrator
+   password once through the system's own prompt if something must be installed, and finishes by adding the server for you
+   and reading the token from `.env`, so you can skip steps 5 to 7 below and go on with step 8. (On macOS it first asks you to install
+   Homebrew and Docker Desktop if they are missing.) The server listens on this computer only.
+   Doing it by hand instead: install the prerequisites and get the code ([section 10](#10-setup-and-usage)), then run
+   `./setup.sh` in the OSISS folder. Among other things it writes a random `ADMIN_TOKEN` into `.env`. That token is what lets
+   the admin app control the server.
 2. **Add your PDFs (optional now):** copy them into `data/pdfs/`. You can also add them later from the app (see
    [11.6.2](#1162-add-a-book)).
 3. **Start the API once by hand to check it:** `./api.sh`. Later you can start and stop it from the app's Dashboard instead.
@@ -1096,7 +1143,10 @@ One machine runs OSISS for everyone on the campus network; an admin manages it f
 
 **On the server**
 
-1. Install the prerequisites, get the code and run `./setup.sh` ([section 10](#10-setup-and-usage)). Copy the PDFs into
+1. Run the installer on the server: `curl -fsSL https://midyadebangshu-spec.github.io/OSISS/install.sh | bash -s -- --listen all --service`
+   ([section 10](#10-setup-and-usage); the admin app's **Add server → Elsewhere** form shows the same command and can save the
+   script as a file to copy over). It installs everything, makes the API listen on the network and start at boot, and prints
+   the address and the admin token. Or do it by hand: install the prerequisites, get the code and run `./setup.sh`. Copy the PDFs into
    `data/pdfs/` and ingest them, then refresh the English word list:
 
    ```bash
@@ -1114,7 +1164,7 @@ One machine runs OSISS for everyone on the campus network; an admin manages it f
 
 3. Let only the admin PC use the admin API: add its address to `.env`, e.g. `echo "ADMIN_ALLOWED_IPS=192.168.1.50" >> .env`.
    Several addresses or ranges are separated by commas (`192.168.1.50,10.0.0.0/24`).
-4. Keep the API running across reboots with the systemd service in `deploy/osiss-api.service`. Change `User` and the `/opt/OSISS`
+4. Keep the API running across reboots with the systemd service in `deploy/osiss-api.service` (the installer's `--service` already did this). Change `User` and the `/opt/OSISS`
    paths to yours, and set `Environment=API_HOST=0.0.0.0` so the campus network can reach it. Then run:
 
    ```bash
@@ -1461,6 +1511,19 @@ install HTTPS for you. With several API copies, build and switch on each copy.
   1. Edit `.env` on the server.
   2. Restart the API.
   3. Update the token under **Servers** in each admin app.
+
+#### The secrets, and what each one protects
+
+| Secret | Protects | Where it lives | How it is checked |
+|---|---|---|---|
+| **Passkey** | The admin app on one admin's computer | In the admin's head; never sent anywhere | Unlocks the app's vault of saved servers and their tokens (AES-256-GCM, key from the passkey with scrypt) |
+| **`ADMIN_TOKEN`** | The server's admin API, `/api/admin/*` | `.env` on the server (mode 600), generated by `setup.sh` (32 random bytes) | Sent as `X-Admin-Token` on every admin call and compared in constant time; unset means the admin API is off |
+| **API keys** | Search, for other apps, in "Approved apps only" mode | Created under *Access & API keys*; the server keeps only a SHA-256 hash | Sent as `X-API-Key`; each key can be revoked on its own. The website itself needs none |
+| **Scholar session** | A scholar's workspace on the website | Browser cookie `osiss_session` (HttpOnly, SameSite=Lax); the server keeps only a hash | Unrelated to admin access |
+
+When the admin app and the server are on the same computer the app reads `ADMIN_TOKEN` from `.env` itself, so nobody copies it.
+When they are on different computers, copy it once over a private channel (the installer prints it at the end; later,
+`grep ADMIN_TOKEN <install folder>/.env` on the server shows it again); the app stores it encrypted under the passkey.
 
 ### 11.8 Capacity and load
 

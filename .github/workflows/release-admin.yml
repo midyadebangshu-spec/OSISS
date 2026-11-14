@@ -1,7 +1,8 @@
 name: Release admin app
 
-# Push a tag such as admin-v1.0.0 to build the OSISS Admin installers and attach
-# them to a GitHub Release. File names are stable so the landing page can link to
+# Push a tag such as admin-v1.0.0, or start this workflow by hand with that tag name
+# (the release then creates the tag on the default branch), to build the OSISS Admin
+# installers and attach them to a GitHub Release. File names are stable so the landing page can link to
 # releases/latest/download/<name>. After the first release, set data-released="true"
 # on #downloads in site/index.html.
 on:
@@ -10,7 +11,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Existing tag to build and attach to (e.g. admin-v1.0.0)"
+        description: "Release tag, e.g. admin-v1.0.0 (created on the default branch if it does not exist)"
         required: true
 
 permissions:
@@ -26,9 +27,10 @@ jobs:
       - name: Create the release if it does not exist
         env:
           GH_TOKEN: ${{ github.token }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
         run: |
           gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 \
-            || gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --verify-tag \
+            || gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --target "$DEFAULT_BRANCH" \
                  --title "OSISS Admin ${TAG#admin-v}" \
                  --notes "Desktop admin app for OSISS. Windows and macOS builds are untested; the macOS build is unsigned."
 

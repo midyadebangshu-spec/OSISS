@@ -1028,11 +1028,11 @@ The app is built from source (Node.js 20.19+ or 22.12+):
 ```bash
 cd admin
 npm install
-npm run dist          # Linux: admin/release/OSISS Admin-1.0.0.AppImage and osiss-admin_1.0.0_amd64.deb
+npm run dist          # Linux: admin/release/OSISS Admin-1.0.1.AppImage and osiss-admin_1.0.1_amd64.deb
 ```
 
-* **Debian/Ubuntu:** `sudo apt install ./release/osiss-admin_1.0.0_amd64.deb`, then start *OSISS Admin* from the applications menu.
-* **Other Linux:** `chmod +x "release/OSISS Admin-1.0.0.AppImage"` and run it.
+* **Debian/Ubuntu:** `sudo apt install ./release/osiss-admin_1.0.1_amd64.deb`, then start *OSISS Admin* from the applications menu.
+* **Other Linux:** `chmod +x "release/OSISS Admin-1.0.1.AppImage"` and run it.
 * **Windows / macOS:** run `npm run dist:win` on a Windows PC or `npm run dist:mac` on a Mac (installers are built on their own
   system). These builds are configured but have only been tested on Linux so far. Starting and stopping services from the
   Dashboard needs Linux or macOS.

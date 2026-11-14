@@ -223,7 +223,7 @@
         <h3><span class="n">1</span>Get the admin app</h3>
         <div class="body">
           <p>Download the installer for the computer you will administer from.</p>
-          <!-- After the first admin release is published (git tag admin-v1.0.0), change data-released to "true". -->
+          <!-- After the first admin release is published (git tag admin-v1.0.1), change data-released to "true". -->
           <div class="downloads" id="downloads" data-released="false">
             <div class="when-released dl-row">
               <a class="btn btn-primary" href="https://github.com/midyadebangshu-spec/OSISS/releases/latest/download/OSISS-Admin-linux.deb">Linux .deb</a>
@@ -239,8 +239,8 @@
             <pre class="code"><code>git clone https://github.com/midyadebangshu-spec/OSISS.git
 cd OSISS/admin
 npm install
-npm run dist          # Linux: release/OSISS Admin-1.0.0.AppImage and a .deb</code></pre>
-            <p>Debian and Ubuntu: <code>sudo apt install ./release/osiss-admin_1.0.0_amd64.deb</code>, then start <em>OSISS Admin</em> from the applications menu. Other Linux: make the AppImage executable and run it. On Windows or macOS use <code>npm run dist:win</code> or <code>npm run dist:mac</code> on that system.</p>
+npm run dist          # Linux: release/OSISS Admin-1.0.1.AppImage and a .deb</code></pre>
+            <p>Debian and Ubuntu: <code>sudo apt install ./release/osiss-admin_1.0.1_amd64.deb</code>, then start <em>OSISS Admin</em> from the applications menu. Other Linux: make the AppImage executable and run it. On Windows or macOS use <code>npm run dist:win</code> or <code>npm run dist:mac</code> on that system.</p>
           </details>
           <p class="note">The app runs on Windows, macOS and Linux, but the OSISS <em>server</em> runs on Ubuntu or macOS only. On Windows the app manages a server on another computer (see step 4). The Windows and macOS installers are built automatically and have not been tested by hand. The installer contains no server address or secret.</p>
         </div>

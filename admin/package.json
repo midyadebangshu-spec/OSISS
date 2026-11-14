@@ -2,7 +2,7 @@
   "name": "osiss-admin",
   "productName": "OSISS Admin",
   "private": true,
-  "version": "1.0.0",
+  "version": "1.0.1",
   "type": "module",
   "description": "Desktop admin app for the OSISS search server",
   "homepage": "https://github.com/midyadebangshu-spec/OSISS",

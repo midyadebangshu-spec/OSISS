@@ -7,10 +7,22 @@ export type Route =
     | { page: 'library'; bookId: number | null; readPage: number | null }
     | { page: 'account' }
     | { page: 'workspace'; tab: WorkspaceTab; id: number | null }
+    | { page: 'notfound'; address: string }
 
 export type WorkspaceTab = 'dashboard' | 'projects' | 'collections' | 'notes' | 'writing' | 'references' | 'study' | 'board'
 
-export function parseHash(hash: string): Route {
+/** The site lives at "/"; any other path (a mistyped address the server answered with the app) is a 404. */
+export function isUnknownPath(pathname: string): boolean {
+    return pathname !== '/' && pathname !== '/index.html'
+}
+
+/** Prefix for in-app links: on an unknown path a bare "#/x" would stay on that path, so go through "/" instead. */
+export function routeBase(pathname: string = window.location.pathname): string {
+    return isUnknownPath(pathname) ? '/' : ''
+}
+
+export function parseHash(hash: string, pathname: string = '/'): Route {
+    if (isUnknownPath(pathname)) return { page: 'notfound', address: pathname + hash }
     const explore = /^#\/explore(?:\/(\d+))?\/?$/.exec(hash)
     if (explore) return { page: 'explore', conceptId: explore[1] ? Number(explore[1]) : null }
     const library = /^#\/library(?:\/(\d+)(?:\/read(?:\/(\d+))?)?)?\/?$/.exec(hash)
@@ -27,7 +39,8 @@ export function parseHash(hash: string): Route {
     if (workspace) {
         return { page: 'workspace', tab: (workspace[1] as WorkspaceTab | undefined) ?? 'dashboard', id: workspace[2] ? Number(workspace[2]) : null }
     }
-    return { page: 'search' }
+    if (hash === '' || hash === '#' || hash === '#/') return { page: 'search' }
+    return { page: 'notfound', address: hash }
 }
 
 export function workspaceHref(tab: WorkspaceTab = 'dashboard', id?: number | null): string {
@@ -49,9 +62,9 @@ export function exploreHref(conceptId?: number | null): string {
 }
 
 export function useRoute(): Route {
-    const [route, setRoute] = useState<Route>(() => parseHash(window.location.hash))
+    const [route, setRoute] = useState<Route>(() => parseHash(window.location.hash, window.location.pathname))
     useEffect(() => {
-        const onChange = () => setRoute(parseHash(window.location.hash))
+        const onChange = () => setRoute(parseHash(window.location.hash, window.location.pathname))
         window.addEventListener('hashchange', onChange)
         return () => window.removeEventListener('hashchange', onChange)
     }, [])

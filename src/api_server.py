@@ -514,8 +514,12 @@ def website_files(path: str):
     if website.is_api_path(path) or not website.is_live():
         raise HTTPException(status_code=404, detail="Not Found")
     target = website.resolve_file(path)
+    status_code = 200
     if target is None and not os.path.splitext(path)[1]:
-        target = website.resolve_file("")  # the single-page app handles any other address itself
+        # An unknown address: send the app, which shows its own "page not found", but with a real 404 status so
+        # crawlers and monitors do not take it for a page.
+        target = website.resolve_file("")
+        status_code = 404
     if target is None:
         raise HTTPException(status_code=404, detail="Not Found")
-    return FileResponse(target, headers=website.cache_headers(os.path.relpath(target, website.DIST)))
+    return FileResponse(target, status_code=status_code, headers=website.cache_headers(os.path.relpath(target, website.DIST)))

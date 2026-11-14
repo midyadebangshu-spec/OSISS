@@ -5,10 +5,11 @@ import { Lightbox } from './components/Lightbox'
 import { AccountPage } from './pages/AccountPage'
 import { ExplorerPage } from './pages/ExplorerPage'
 import { LibraryPage } from './pages/LibraryPage'
+import { NotFoundPage } from './pages/NotFoundPage'
 import { SearchPage } from './pages/SearchPage'
 import { WorkspacePage } from './pages/WorkspacePage'
 import { useAuth } from './lib/auth'
-import { useRoute } from './lib/route'
+import { routeBase, useRoute } from './lib/route'
 import { ViewerContext } from './lib/viewer'
 import type { LightboxItem, Viewer } from './lib/viewer'
 import type { PagePreview } from './types/search'
@@ -16,7 +17,7 @@ import type { PagePreview } from './types/search'
 function NavLink({ href, active, children }: { href: string; active: boolean; children: React.ReactNode }) {
   return (
     <a
-      href={href}
+      href={routeBase() + href}
       aria-current={active ? 'page' : undefined}
       className={`inline-flex items-center gap-1.5 border-b-2 px-1 py-2 text-sm font-medium ${
         active ? 'border-zinc-950 text-zinc-950' : 'border-transparent text-zinc-500 hover:text-zinc-950'
@@ -76,7 +77,7 @@ function App() {
     <ViewerContext.Provider value={viewer}>
       <main className="min-h-screen bg-white text-zinc-950">
         <nav className="flex items-center justify-between gap-4 border-b border-zinc-200 px-4 md:px-6" aria-label="Main">
-          <a href="#/" className="py-2 text-xs font-semibold uppercase tracking-[0.2em] text-zinc-700">
+          <a href={`${routeBase()}#/`} className="py-2 text-xs font-semibold uppercase tracking-[0.2em] text-zinc-700">
             OSISS
           </a>
           <div className="flex items-center gap-5">
@@ -108,6 +109,7 @@ function App() {
             <div hidden={route.page !== 'library'}>
               <LibraryPage bookId={route.page === 'library' ? route.bookId : null} readPage={route.page === 'library' ? route.readPage : null} active={route.page === 'library'} />
             </div>
+            {route.page === 'notfound' && <NotFoundPage address={route.address} />}
             {route.page === 'account' && <AccountPage />}
             {route.page === 'workspace' && <WorkspacePage tab={route.tab} id={route.id} />}
           </div>

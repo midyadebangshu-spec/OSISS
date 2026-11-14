@@ -90,6 +90,16 @@ def test_the_switch_is_saved_and_the_environment_only_sets_its_default(site):
     assert website.is_live() is False
 
 
+def test_unknown_addresses_get_the_app_with_a_real_404(site):
+    go_live(site)
+    for path in ("/nope", "/library/3", "/a/b/c"):
+        response = site.get(path)
+        assert response.status_code == 404 and "<div id=root>" in response.text, path  # the app draws its own 404 page
+        assert response.headers["cache-control"] == "no-cache", path
+    assert site.get("/").status_code == 200 and site.get("/index.html").status_code == 200
+    assert site.get("/missing.js").status_code == 404 and "<div id=root>" not in site.get("/missing.js").text
+
+
 def test_files_outside_the_build_are_never_served(site):
     go_live(site)
     for path in ("/../secret.txt", "/%2e%2e/secret.txt", "/assets/../../secret.txt", "/..%2fsecret.txt", "//etc/passwd"):

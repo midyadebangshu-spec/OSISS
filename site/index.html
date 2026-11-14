@@ -1,0 +1,416 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>OSISS: Open-Source Institutional Scholar Search</title>
+<meta name="description" content="Offline semantic search over institutional PDFs in Bengali, Hindi and English. Returns verbatim quotes with the book and page, never generated text.">
+<meta name="color-scheme" content="light dark">
+<link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="style.css">
+
+<meta property="og:type" content="website">
+<meta property="og:title" content="OSISS: Open-Source Institutional Scholar Search">
+<meta property="og:description" content="Ask in Bengali, Hindi or English. Get the exact quote, the book and the page. Offline, extractive, never generated.">
+<meta property="og:image" content="https://midyadebangshu-spec.github.io/OSISS/assets/og-image.png">
+<meta property="og:url" content="https://midyadebangshu-spec.github.io/OSISS/">
+<meta name="twitter:card" content="summary_large_image">
+<script>
+  // Set before first paint so the theme and the "JS is on" styles do not flash.
+  (function () {
+    var d = document.documentElement;
+    d.classList.add('js');
+    try { var t = localStorage.getItem('osiss-theme'); if (t === 'light' || t === 'dark') d.setAttribute('data-theme', t); } catch (e) {}
+  })();
+</script>
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+
+<header class="site-header">
+  <div class="bar">
+    <a class="brand" href="#top" aria-label="OSISS, back to top">
+      <img src="assets/logo-mark.svg" width="32" height="32" alt="">
+      <span>OSISS</span>
+    </a>
+    <nav id="nav" class="nav" aria-label="Sections">
+      <a href="#features">Features</a>
+      <a href="#how">How it works</a>
+      <a href="#see">Screens</a>
+      <a href="#install">Install</a>
+      <a href="#faq">Help</a>
+    </nav>
+    <div class="actions">
+      <button class="icon-btn" id="theme" type="button" aria-label="Switch colour theme" title="Switch colour theme">
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>
+      </button>
+      <a class="btn btn-ghost" href="https://github.com/midyadebangshu-spec/OSISS">GitHub</a>
+    </div>
+  </div>
+</header>
+
+<main id="main">
+
+<!-- Hero -->
+<section class="hero" id="top">
+  <div class="wrap hero-grid">
+    <div class="hero-copy">
+      <p class="eyebrow">Open-Source Institutional Scholar Search</p>
+      <h1>The exact quote.<br>The book.<br>The page.</h1>
+      <p class="lead">OSISS is an offline search engine for your institution's PDFs. Ask in Bengali, Hindi or English and it returns sentences taken word for word from the books, with a link to the page. It never writes an answer of its own, so it cannot invent one.</p>
+      <div class="cta">
+        <a class="btn btn-primary" href="#install">Install it</a>
+        <a class="btn" href="https://github.com/midyadebangshu-spec/OSISS">View on GitHub</a>
+      </div>
+      <ul class="langs" aria-label="Supported languages">
+        <li>Bengali</li><li>Hindi</li><li>English</li><li>Romanized and mixed</li>
+      </ul>
+    </div>
+
+    <figure class="demo" aria-label="Example search result">
+      <div class="demo-search">
+        <span class="demo-q" id="demo-q" data-text="What is a call stack?">What is a call stack?</span><span class="caret" aria-hidden="true"></span>
+      </div>
+      <div class="demo-result" id="demo-result">
+        <p class="demo-kicker">Best answer · Definition</p>
+        <p class="demo-quote">“… The <mark>call stack (execution stack) is a data structure that controls the calling and return of functions.</mark>”</p>
+        <p class="demo-source"><strong>Introduction to Computer Science</strong> · OpenStax · Page 324 <span class="demo-link">Open in PDF</span></p>
+      </div>
+      <figcaption>Illustration of a result. Real results come from your own books.</figcaption>
+    </figure>
+  </div>
+</section>
+
+<!-- Features -->
+<section class="section" id="features">
+  <div class="wrap">
+    <p class="eyebrow">Why OSISS</p>
+    <h2>Built to be trusted, not to impress</h2>
+    <div class="cards three">
+      <article class="card">
+        <h3>Extractive only</h3>
+        <p>Every sentence on screen exists in a source book. There is no generated text, so there is nothing to hallucinate. Each result shows the book, author, page and a link into the PDF.</p>
+      </article>
+      <article class="card">
+        <h3>Fully offline</h3>
+        <p>All models load from your own disk and no external API is called at query time. The internet is needed during setup only, to download packages and models.</p>
+      </article>
+      <article class="card">
+        <h3>Three languages, any spelling</h3>
+        <p>Ask in Bengali or Hindi script, in romanized form (“goti kake bole?”), in English, or a mix. A question in one language can match a book in another, though that is still the weakest area.</p>
+      </article>
+    </div>
+
+    <div class="split">
+      <div>
+        <h3>A workspace for scholars</h3>
+        <p>Search needs no account. With one, scholars can go further:</p>
+        <ul class="ticks">
+          <li>Save passages with their book and page, and highlight in a page reader.</li>
+          <li>Organise work into projects, collections and notes, or lay it out on a research board.</li>
+          <li>Write with quotations that are checked against the page they cite.</li>
+          <li>Get bibliographies in APA 7, MLA 9, Chicago and IEEE, and export to Word, LaTeX or Markdown.</li>
+          <li>Study with flashcards made from saved quotes.</li>
+        </ul>
+      </div>
+      <div>
+        <h3>An admin app for whoever runs it</h3>
+        <p>A desktop app controls the server, so nobody has to live in a terminal:</p>
+        <ul class="ticks">
+          <li>Start and stop the services and watch their health.</li>
+          <li>Add, fix and delete books, and run ingestion.</li>
+          <li>Test searches and change search settings without a restart.</li>
+          <li>Decide who may search, hand out API keys and put the website live.</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- How it works -->
+<section class="section alt" id="how">
+  <div class="wrap">
+    <p class="eyebrow">How a search works</p>
+    <h2>Four steps from question to quote</h2>
+    <ol class="steps4">
+      <li>
+        <span class="n">1</span>
+        <h3>Find candidates</h3>
+        <p>Two searches run side by side: one by meaning (BGE-M3 embeddings) and one by keywords. Their results are fused.</p>
+      </li>
+      <li>
+        <span class="n">2</span>
+        <h3>Rerank</h3>
+        <p>A cross-encoder reads the question with each passage and orders them. Near-duplicates are dropped and pages are diversified.</p>
+      </li>
+      <li>
+        <span class="n">3</span>
+        <h3>Extract</h3>
+        <p>A question-answering model marks the exact span that answers the question, and the sentence around it is kept.</p>
+      </li>
+      <li>
+        <span class="n">4</span>
+        <h3>Show the source</h3>
+        <p>You get the quote with its paragraph, the book, the page and a link to open the PDF at that page.</p>
+      </li>
+    </ol>
+
+    <div class="stats" role="group" aria-label="Measured results">
+      <div><b>96%</b><span>right page in the top 3, on 109 test questions</span></div>
+      <div><b>24</b><span>books, 16,071 chunks in the test corpus</span></div>
+      <div><b>2–3 s</b><span>per query on one RTX 3060</span></div>
+    </div>
+    <p class="note">These questions were written by the authors, so the 96% is optimistic and real questions will score lower. Cross-language questions are the weakest area. <a href="https://github.com/midyadebangshu-spec/OSISS#9-current-accuracy-and-known-limits">Read the limits</a>.</p>
+  </div>
+</section>
+
+<!-- Screens -->
+<section class="section" id="see">
+  <div class="wrap">
+    <p class="eyebrow">See it</p>
+    <h2>The website, in use</h2>
+    <p class="sub">Screenshots from a demo install. The name shown in the corner is a sample account.</p>
+
+    <div class="tabs" data-tabs>
+      <div class="tablist" role="tablist" aria-label="Screens">
+        <button role="tab" type="button">Search</button>
+        <button role="tab" type="button">Reader</button>
+        <button role="tab" type="button">Quote check</button>
+        <button role="tab" type="button">Board</button>
+        <button role="tab" type="button">Study</button>
+      </div>
+      <div class="panel shot-panel" role="tabpanel">
+        <a class="shot" href="assets/search-save.webp"><img src="assets/search-save.webp" width="800" height="715" loading="lazy" alt="A search for “what is a software stack”: a highlighted definition, a diagram from the book, and the book, page and a Save menu."></a>
+        <p class="cap"><b>Search.</b> The definition is highlighted in context, with the figure from the page, the source and a Save menu.</p>
+      </div>
+      <div class="panel shot-panel" role="tabpanel">
+        <a class="shot" href="assets/reader-highlight.webp"><img src="assets/reader-highlight.webp" width="800" height="715" loading="lazy" alt="The page reader showing a book page with the call stack definition highlighted."></a>
+        <p class="cap"><b>Reader.</b> Open the page itself, with the matched sentence highlighted. Select text to save your own highlights.</p>
+      </div>
+      <div class="panel shot-panel" role="tabpanel">
+        <a class="shot" href="assets/writing-check.webp"><img src="assets/writing-check.webp" width="800" height="715" loading="lazy" alt="The writing studio checking three quotations: one matches the page, one differs, one is not found."></a>
+        <p class="cap"><b>Quote check.</b> Each quotation in a draft is compared with the page it cites: matches, differs, or not found.</p>
+      </div>
+      <div class="panel shot-panel" role="tabpanel">
+        <a class="shot" href="assets/board.webp"><img src="assets/board.webp" width="800" height="715" loading="lazy" alt="The research board with claims, evidence and links between them."></a>
+        <p class="cap"><b>Board.</b> Lay out claims and supporting evidence, then turn the board into an outline.</p>
+      </div>
+      <div class="panel shot-panel" role="tabpanel">
+        <a class="shot" href="assets/study-review.webp"><img src="assets/study-review.webp" width="800" height="715" loading="lazy" alt="A flashcard review with the quote on the back and grading buttons."></a>
+        <p class="cap"><b>Study.</b> Flashcards from saved quotes, scheduled with spaced repetition.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- Install -->
+<section class="section alt" id="install">
+  <div class="wrap">
+    <p class="eyebrow">Install</p>
+    <h2>Set up OSISS with the admin app</h2>
+    <p class="sub">The admin app is the control panel for everything after the first setup command. Follow the steps in order. The full guide is <a href="https://github.com/midyadebangshu-spec/OSISS#11-using-the-admin-app-step-by-step">section 11 of the README</a>.</p>
+
+    <div class="req" role="group" aria-label="Requirements">
+      <div><b>System</b><span>Ubuntu 22.04 / 24.04 or macOS for the server. Windows is not supported for the server.</span></div>
+      <div><b>Memory and disk</b><span>16 GB RAM, about 40 GB free disk.</span></div>
+      <div><b>GPU</b><span>Optional. An NVIDIA GPU is much faster; without one, search runs on the CPU.</span></div>
+      <div><b>Internet</b><span>During setup only (about 12 GB of models). OSISS runs offline afterwards.</span></div>
+    </div>
+
+    <ol class="install">
+
+      <li>
+        <h3><span class="n">1</span>Get the admin app</h3>
+        <div class="body">
+          <p>Download the installer for the computer you will administer from.</p>
+          <!-- After the first admin release is published (git tag admin-v1.0.0), change data-released to "true". -->
+          <div class="downloads" id="downloads" data-released="false">
+            <div class="when-released dl-row">
+              <a class="btn btn-primary" href="https://github.com/midyadebangshu-spec/OSISS/releases/latest/download/OSISS-Admin-linux.deb">Linux .deb</a>
+              <a class="btn" href="https://github.com/midyadebangshu-spec/OSISS/releases/latest/download/OSISS-Admin-linux.AppImage">Linux AppImage</a>
+              <a class="btn" href="https://github.com/midyadebangshu-spec/OSISS/releases/latest/download/OSISS-Admin-windows.exe">Windows</a>
+              <a class="btn" href="https://github.com/midyadebangshu-spec/OSISS/releases/latest/download/OSISS-Admin-macos.dmg">macOS</a>
+              <a class="btn btn-ghost" href="https://github.com/midyadebangshu-spec/OSISS/releases/latest">All releases</a>
+            </div>
+            <p class="when-pending callout">The first installer release is not published yet. Until it is, build the app from source as shown below.</p>
+          </div>
+          <details class="more" open>
+            <summary>Build from source (needs Node.js 20.19+ or 22.12+)</summary>
+            <pre class="code"><code>git clone https://github.com/midyadebangshu-spec/OSISS.git
+cd OSISS/admin
+npm install
+npm run dist          # Linux: release/OSISS Admin-1.0.0.AppImage and a .deb</code></pre>
+            <p>Debian and Ubuntu: <code>sudo apt install ./release/osiss-admin_1.0.0_amd64.deb</code>, then start <em>OSISS Admin</em> from the applications menu. Other Linux: make the AppImage executable and run it. On Windows or macOS use <code>npm run dist:win</code> or <code>npm run dist:mac</code> on that system.</p>
+          </details>
+          <p class="note">The Windows and macOS builds are configured but have only been tested on Linux. Starting and stopping services from the Dashboard works on Linux and macOS only. The installer contains no server address or secret.</p>
+        </div>
+      </li>
+
+      <li>
+        <h3><span class="n">2</span>Create your passkey</h3>
+        <div class="body">
+          <p>Open the app and click <b>Create my passkey</b>. It shows a random 6-character passkey once. Write it down, type it back and click <b>Confirm and continue</b>. The app asks for it every time it opens and after 15 minutes idle.</p>
+          <a class="shot small" href="assets/passkey-setup.webp"><img src="assets/passkey-setup.webp" width="1280" height="800" loading="lazy" alt="The OSISS Admin first-launch screen showing a passkey and a field to type it back."></a>
+        </div>
+      </li>
+
+      <li>
+        <h3><span class="n">3</span>Prepare the server (the one terminal step)</h3>
+        <div class="body">
+          <p>The admin app controls an OSISS server but does not install it, so run this once on the computer that will host OSISS. <code>setup.sh</code> sets up Python, Docker, the database, the models and an <code>ADMIN_TOKEN</code> that the app uses to connect.</p>
+          <div class="tabs" data-tabs data-remember="osiss-os">
+            <div class="tablist" role="tablist" aria-label="Operating system">
+              <button role="tab" type="button">Ubuntu</button>
+              <button role="tab" type="button">macOS</button>
+            </div>
+            <div class="panel" role="tabpanel">
+              <p class="label">Ubuntu, as a user who may use <code>sudo</code></p>
+              <pre class="code"><code>sudo apt-get update
+sudo apt-get install -y git curl python3 python3-venv python3-pip \
+  tesseract-ocr tesseract-ocr-eng tesseract-ocr-ben tesseract-ocr-hin wamerican
+
+# Docker Engine with the Compose plugin
+curl -fsSL https://get.docker.com | sudo sh
+sudo usermod -aG docker "$USER"   # then log out and back in
+
+# Node.js 22
+curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
+sudo apt-get install -y nodejs
+
+git clone https://github.com/midyadebangshu-spec/OSISS.git
+cd OSISS
+./setup.sh</code></pre>
+              <p class="note">With an NVIDIA GPU, also run <code>sudo ubuntu-drivers install</code>, reboot, and check that <code>nvidia-smi</code> lists the card.</p>
+            </div>
+            <div class="panel" role="tabpanel">
+              <p class="label">macOS, with <a href="https://brew.sh">Homebrew</a> and <a href="https://www.docker.com/products/docker-desktop/">Docker Desktop</a> (start it first)</p>
+              <pre class="code"><code>brew install git python node tesseract tesseract-lang
+
+git clone https://github.com/midyadebangshu-spec/OSISS.git
+cd OSISS
+./setup.sh</code></pre>
+              <p class="note">Macs have no CUDA, so models run on the CPU: search works but is slower.</p>
+            </div>
+          </div>
+          <p class="note"><code>setup.sh</code> is safe to run again. It downloads about 12 GB, so allow some time.</p>
+        </div>
+      </li>
+
+      <li>
+        <h3><span class="n">4</span>Add the server in the app</h3>
+        <div class="body">
+          <p>In <b>Servers</b>, fill in the form:</p>
+          <ul class="plain">
+            <li><b>Name:</b> <code>This computer</code></li>
+            <li><b>Where does the server run?</b> On this computer (can start / stop it)</li>
+            <li><b>Server URL:</b> <code>http://localhost:8000</code></li>
+            <li><b>OSISS folder:</b> click <b>Browse</b> and pick the OSISS folder</li>
+          </ul>
+          <p>Click <b>Read token from .env</b>, then <b>Save &amp; test connection</b>. You should see “Connected: admin token accepted”.</p>
+          <a class="shot small" href="assets/add-local-server.webp"><img src="assets/add-local-server.webp" width="1280" height="800" loading="lazy" alt="The Servers page of OSISS Admin after a successful connection test."></a>
+        </div>
+      </li>
+
+      <li>
+        <h3><span class="n">5</span>Choose who may search</h3>
+        <div class="body">
+          <p>The Dashboard asks how this server should serve search. On one computer or a trusted campus network choose <b>Open</b>; choose <b>Approved apps only</b> when other apps should need an API key. You can change it later under <b>Access &amp; API keys</b>.</p>
+          <a class="shot small" href="assets/access-wizard.webp"><img src="assets/access-wizard.webp" width="1280" height="800" loading="lazy" alt="The dialog asking whether search is open or limited to approved apps."></a>
+        </div>
+      </li>
+
+      <li>
+        <h3><span class="n">6</span>Start the services</h3>
+        <div class="body">
+          <p>On the Dashboard, click <b>Start</b> for PostgreSQL + Elasticsearch, then <b>Start API</b>. The tiles below show each part; they should turn green once the models have loaded. <b>API output</b> shows the log if something fails.</p>
+          <a class="shot small" href="assets/dashboard.webp"><img src="assets/dashboard.webp" width="1280" height="800" loading="lazy" alt="The OSISS Admin dashboard with service controls and health tiles."></a>
+          <p class="note">This screenshot comes from a demo server with no Docker, Elasticsearch or models, which is why some tiles are red. On a real install they are green.</p>
+        </div>
+      </li>
+
+      <li>
+        <h3><span class="n">7</span>Add your books</h3>
+        <div class="body">
+          <p>Add PDFs from the <b>Books</b> page, or copy them into <code>data/pdfs/</code>. Then open <b>Ingestion &amp; jobs</b> and click <b>Scan now</b>, or switch on <b>PDF folder polling</b> so new files are picked up automatically. Afterwards, fix the guessed titles on the Books page.</p>
+          <a class="shot small" href="assets/ingestion.webp"><img src="assets/ingestion.webp" width="1280" height="800" loading="lazy" alt="The Ingestion and jobs page with a finished scan and its log."></a>
+          <p>When the first ingestion has finished, refresh the English word list once (the one other terminal command) and restart the API from the Dashboard (<b>Stop API</b>, <b>Start API</b>). It helps OSISS tell English from romanized Bengali and Hindi.</p>
+          <pre class="code"><code>.venv/bin/python src/build_english_vocab.py</code></pre>
+        </div>
+      </li>
+
+      <li>
+        <h3><span class="n">8</span>Put the website live and search</h3>
+        <div class="body">
+          <p>Open the <b>Website</b> page, click <b>Build website</b>, then <b>Go live</b>. The OSISS server now serves the website at <code>http://localhost:8000</code>. Open it and ask a question.</p>
+          <a class="shot small" href="assets/website.webp"><img src="assets/website.webp" width="800" height="715" loading="lazy" alt="The Website page of OSISS Admin with Build website and Go live."></a>
+          <p class="note">Building the website needs Node.js 20.19+ or 22.12+ on the server.</p>
+        </div>
+      </li>
+    </ol>
+
+    <div class="cards two other-setups">
+      <article class="card">
+        <h3>Campus network</h3>
+        <p>One server for everyone on the network, managed from an admin's own PC.</p>
+        <a href="https://github.com/midyadebangshu-spec/OSISS#114-setup-b-a-server-on-the-campus-network">Read setup B</a>
+      </article>
+      <article class="card">
+        <h3>Public website</h3>
+        <p>A server with a public address and your own domain, with HTTPS through Caddy.</p>
+        <a href="https://github.com/midyadebangshu-spec/OSISS#115-setup-c-a-public-website-on-your-own-domain">Read setup C</a>
+      </article>
+    </div>
+  </div>
+</section>
+
+<!-- FAQ -->
+<section class="section" id="faq">
+  <div class="wrap narrow">
+    <p class="eyebrow">Help</p>
+    <h2>When something goes wrong</h2>
+    <details>
+      <summary>The app says “Admin API is disabled”</summary>
+      <p>The server has no <code>ADMIN_TOKEN</code>. Re-run <code>./setup.sh</code>, or add <code>ADMIN_TOKEN=&lt;a long random value&gt;</code> to <code>.env</code>, restart the API and use <b>Read token from .env</b> again.</p>
+    </details>
+    <details>
+      <summary>The app gets error 429</summary>
+      <p>Too many wrong admin tokens came from your address. Wait 15 minutes, or correct the token under <b>Servers</b>.</p>
+    </details>
+    <details>
+      <summary>Docker says permission denied</summary>
+      <p>Add your user to the <code>docker</code> group (<code>sudo usermod -aG docker "$USER"</code>) and log out and back in.</p>
+    </details>
+    <details>
+      <summary><code>setup.sh</code> stops with “ERROR”</summary>
+      <p>A prerequisite is missing or too old (Node.js must be 20.19+ or 22.12+). Install it as shown in step 3 and run <code>./setup.sh</code> again; it skips work that is already done.</p>
+    </details>
+    <details>
+      <summary>I forgot my passkey</summary>
+      <p>Use <b>Forgot the passkey?</b> on the lock screen. It removes the saved servers from that computer and creates a new passkey. Nothing on the servers changes; add them again with their tokens.</p>
+    </details>
+    <details>
+      <summary>Search is slow</summary>
+      <p>Without an NVIDIA GPU the models run on the CPU, which takes many times longer per question. A 12 GB GPU answers in about 2–4 seconds.</p>
+    </details>
+    <p class="note">More answers are in the <a href="https://github.com/midyadebangshu-spec/OSISS#15-troubleshooting">troubleshooting section</a> of the README.</p>
+  </div>
+</section>
+
+</main>
+
+<footer class="site-footer">
+  <div class="wrap foot">
+    <div class="brand"><img src="assets/logo-mark.svg" width="28" height="28" alt=""><span>OSISS</span></div>
+    <p>Open-Source Institutional Scholar Search. Offline by design.</p>
+    <nav aria-label="Project links">
+      <a href="https://github.com/midyadebangshu-spec/OSISS">GitHub</a>
+      <a href="https://github.com/midyadebangshu-spec/OSISS#osiss--open-source-institutional-scholar-search">README</a>
+      <a href="https://github.com/midyadebangshu-spec/OSISS#17-licenses">Licenses</a>
+      <a href="https://github.com/midyadebangshu-spec/OSISS/issues">Issues</a>
+    </nav>
+  </div>
+</footer>
+
+<script src="script.js" defer></script>
+</body>
+</html>
